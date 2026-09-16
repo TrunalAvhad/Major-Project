@@ -701,33 +701,3 @@ The documented Hospital Client flow can be summarized as:
 
 For the complete federated-learning architecture and the responsibilities of all project modules, see `ml_pipeline_architecture.md`.
 
-## 29. Current Repository Readiness
-
-The documented Hospital Client preprocessing foundation currently provides:
-
-```text
-Module 4
-    Dataset ingestion and validation
-    Dataset profiling
-    Privacy checks
-    Duplicate detection
-             │
-             ▼
-Module 5
-    Automated preprocessing
-    Quality validation
-    Quarantine
-    Leakage prevention
-    Patient/group-aware splitting
-    Class balancing
-    Lazy/materialized output
-    Storage safety
-    Reporting
-    Testing
-             │
-             ▼
-Downstream ML Training
-```
-
-Module 4 and Module 5 therefore establish the validated and preprocessing-controlled data boundary required before the downstream ML training stages.
-
