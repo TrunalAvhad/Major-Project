@@ -1,0 +1,123 @@
+# ==============================================================================
+# Master Unified .gitignore for Secure Federated Deep Learning Platform
+# ==============================================================================
+
+# --- Environment & Secret Configuration ---
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# --- Node.js & Frontend Ecosystem ---
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Frontend Production Builds
+dist/
+dist-ssr/
+build/
+**/dist/
+**/dist-ssr/
+**/build/
+
+# --- Python & Federated Learning Ecosystem ---
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Distribution / Packaging
+.eggs/
+*.egg-info/
+*.egg
+develop-eggs/
+downloads/
+parts/
+sdist/
+var/
+wheels/
+*.manifest
+*.spec
+
+# Jupyter & Data Science Notebooks
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+
+# --- Medical Datasets & Sensitive Patient Images ---
+# Invariant: Raw medical records & patient scans must NEVER be committed
+*.dcm
+*.dicom
+*.nii
+*.nii.gz
+*.mhd
+*.raw
+data/
+datasets/
+**/data/
+**/datasets/
+temp_slices/
+
+# --- Machine Learning Weights & Checkpoints ---
+# Central weights should be stored via designated registry/enclave, not git history
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.bin
+*.h5
+*.tflite
+checkpoints/
+**/checkpoints/
+
+# --- Testing & Quality Assurance ---
+coverage/
+.nyc_output/
+*.lcov
+.pytest_cache/
+.tox/
+.nox/
+htmlcov/
+
+# --- Logs & Runtime Output ---
+logs/
+*.log
+**/*.log
+
+# --- IDE, Text Editors & Operating System ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.bak
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
