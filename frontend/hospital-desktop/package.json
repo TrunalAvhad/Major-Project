@@ -10,6 +10,7 @@
     "test": "node --test src/tests/*.test.js"
   },
   "dependencies": {
+    "i": "^0.3.7",
     "lucide-react": "^1.47.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
