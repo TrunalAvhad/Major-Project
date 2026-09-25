@@ -8,6 +8,10 @@ const userSchema = new mongoose.Schema({
     unique: true,
     index: true,
   },
+  account_id: {
+    type: String,
+    index: true,
+  },
   name: {
     type: String,
     required: true,
@@ -15,7 +19,8 @@ const userSchema = new mongoose.Schema({
   email: {
     type: String,
     required: true,
-    unique: true,
+    lowercase: true,
+    trim: true,
     index: true,
   },
   password_hash: {
@@ -60,6 +65,9 @@ const userSchema = new mongoose.Schema({
 }, {
   timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' }
 });
+
+// Compound unique index: Same email can exist for different roles, but NOT twice for the same role
+userSchema.index({ email: 1, role: 1 }, { unique: true });
 
 // Mongoose v7+ async pre-hooks do not use the next() callback.
 // Simply return early or let the async function resolve.

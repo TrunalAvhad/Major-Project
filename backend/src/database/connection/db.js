@@ -10,7 +10,6 @@ const connectDB = async () => {
   }
 
   const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/federated_dl_auth';
-
   try {
     const conn = await mongoose.connect(uri);
     console.log(`[Database] MongoDB Connected: ${conn.connection.host}`);

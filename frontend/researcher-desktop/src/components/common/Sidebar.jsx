@@ -28,7 +28,7 @@ export const Sidebar = () => {
     currentUser,
     notificationsCount,
     messagesCount,
-    setIsLoggedIn
+    logout
   } = useApp();
 
   const navItems = [
@@ -45,9 +45,13 @@ export const Sidebar = () => {
     { id: 'settings', label: 'Settings & Profile', icon: Settings },
   ];
 
-  // Admin exclusive tab
+  // Admin exclusive tabs
   if (userRole === 'admin') {
-    navItems.splice(10, 0, { id: 'users', label: 'User Management', icon: Users });
+    navItems.splice(10, 0,
+      { id: 'users', label: 'User Management', icon: Users },
+      { id: 'approvals', label: 'Approvals', icon: Lock },
+      { id: 'disease-models', label: 'Disease Models', icon: Layers }
+    );
   }
 
   return (
@@ -250,7 +254,7 @@ export const Sidebar = () => {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '10px', fontSize: '10px', color: 'var(--text-muted)' }}>
           <span className="font-mono">⏱ {currentUser.sessionDuration}</span>
           <button
-            onClick={() => setIsLoggedIn(false)}
+            onClick={() => logout()}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -261,7 +265,7 @@ export const Sidebar = () => {
               cursor: 'pointer',
               fontSize: '11px'
             }}
-            title="Log out and verify Login screen"
+            title="Log out and return to secure authentication gateway"
           >
             <LogOut size={12} />
             <span>Exit</span>

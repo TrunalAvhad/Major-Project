@@ -26,6 +26,9 @@ import { UserManagementView } from './views/UserManagementView';
 import { SettingsView } from './views/SettingsView';
 import { ProfileView } from './views/ProfileView';
 import { StatesDemoView } from './views/StatesDemoView';
+import { AdminApprovalView } from './views/AdminApprovalView';
+import { AdminDiseaseModelsView } from './views/AdminDiseaseModelsView';
+import { HomeView } from './views/HomeView';
 
 const MainLayout = () => {
   const { activeScreen, isLoggedIn } = useApp();
@@ -71,6 +74,12 @@ const MainLayout = () => {
         return <StatesDemoView />;
       case 'request-access':
         return <RequestAccessView />;
+      case 'approvals':
+        return <AdminApprovalView />;
+      case 'disease-models':
+        return <AdminDiseaseModelsView />;
+      case 'home':
+        return <HomeView />;
       default:
         return <DashboardView />;
     }

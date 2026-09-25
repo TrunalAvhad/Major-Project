@@ -1,7 +1,7 @@
 const User = require('../models/User');
 const Hospital = require('../models/Hospital');
 const AuditService = require('../services/auditService');
-const { generateToken, generateUserId } = require('../services/authService');
+const { generateToken, generateUserId, generateAccountId, isValidEmail } = require('../services/authService');
 const { ROLES } = require('../permissions/roles');
 
 
@@ -13,6 +13,13 @@ const registerUser = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: { code: 'VALIDATION_ERROR', message: 'Please provide all required fields' }
+      });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Invalid email address format' }
       });
     }
 
@@ -53,23 +60,32 @@ const registerUser = async (req, res) => {
       });
     }
 
-    const userExists = await User.findOne({ email });
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Check if an account already exists for this SAME email + role
+    const userExists = await User.findOne({ email: normalizedEmail, role });
     if (userExists) {
       return res.status(400).json({
         success: false,
-        error: { code: 'EMAIL_ALREADY_EXISTS', message: 'Email already exists' }
+        error: { code: 'EMAIL_ALREADY_EXISTS', message: 'An account with this email and role already exists' }
       });
     }
 
     const user_id = generateUserId();
+    const account_id = generateAccountId(role);
+
+    // Researchers start as 'pending' (requires Admin approval); hospital operators start as 'active'
+    const initialStatus = role === ROLES.RESEARCHER ? 'pending' : 'active';
+
     const user = await User.create({
       user_id,
-      name,
-      email,
+      account_id,
+      name: name.trim(),
+      email: normalizedEmail,
       password_hash: password, // Will be hashed by pre-save middleware
       role,
       hospital_id: role === ROLES.HOSPITAL_OPERATOR ? hospital_id : null,
-      status: 'pending' // As per account status rules
+      status: initialStatus
     });
 
     await AuditService.logEvent({
@@ -88,6 +104,7 @@ const registerUser = async (req, res) => {
       data: {
         user: {
           user_id: user.user_id,
+          account_id: user.account_id,
           name: user.name,
           email: user.email,
           role: user.role,
@@ -105,7 +122,7 @@ const registerUser = async (req, res) => {
 };
 
 const loginUser = async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, role } = req.body;
 
   try {
     if (!email || !password) {
@@ -115,7 +132,28 @@ const loginUser = async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email }).select('+password_hash');
+    const normalizedEmail = email.toLowerCase().trim();
+    let user = null;
+
+    if (role) {
+      // Direct role-specific query
+      user = await User.findOne({ email: normalizedEmail, role }).select('+password_hash');
+    } else {
+      // Find all accounts matching this email across roles
+      const matchingUsers = await User.find({ email: normalizedEmail }).select('+password_hash');
+      if (matchingUsers.length === 1) {
+        user = matchingUsers[0];
+      } else if (matchingUsers.length > 1) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'ROLE_SELECTION_REQUIRED',
+            message: 'Multiple accounts exist for this email. Please select your account role to proceed.',
+            available_roles: matchingUsers.map(u => ({ role: u.role, account_id: u.account_id }))
+          }
+        });
+      }
+    }
     
     // We don't expose if the email exists or not on failure
     if (!user) {
@@ -125,7 +163,7 @@ const loginUser = async (req, res) => {
         ip_address: req.ip,
         user_agent: req.get('User-Agent'),
         success: false,
-        metadata: { email_attempt: email }
+        metadata: { email_attempt: normalizedEmail, role_attempt: role || null }
       });
       return res.status(401).json({
         success: false,
@@ -214,6 +252,7 @@ const loginUser = async (req, res) => {
       data: {
         user: {
           user_id: user.user_id,
+          account_id: user.account_id || null,
           name: user.name,
           email: user.email,
           role: user.role,
@@ -254,6 +293,7 @@ const getMe = async (req, res) => {
     data: {
       user: {
         user_id: req.user.user_id,
+        account_id: req.user.account_id || null,
         name: req.user.name,
         email: req.user.email,
         role: req.user.role,
@@ -262,6 +302,37 @@ const getMe = async (req, res) => {
       }
     }
   });
+};
+
+const getRolesByEmail = async (req, res) => {
+  const email = req.query.email || req.body?.email;
+  if (!email) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'VALIDATION_ERROR', message: 'Email query parameter is required' }
+    });
+  }
+
+  try {
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const users = await User.find({ email: normalizedEmail }).select('role account_id status');
+    return res.status(200).json({
+      success: true,
+      data: {
+        email: normalizedEmail,
+        roles: users.map(u => ({
+          role: u.role,
+          account_id: u.account_id || null,
+          status: u.status
+        }))
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: error.message }
+    });
+  }
 };
 
 const changePassword = async (req, res) => {
@@ -373,5 +444,6 @@ module.exports = {
   loginUser,
   logoutUser,
   getMe,
+  getRolesByEmail,
   changePassword
 };

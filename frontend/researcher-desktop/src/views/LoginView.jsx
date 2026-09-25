@@ -1,18 +1,34 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { Network, Lock, ShieldCheck, KeyRound, Check, ChevronDown, Terminal } from 'lucide-react';
+import { Network, Lock, ShieldCheck, KeyRound, Check, ChevronDown, Terminal, AlertCircle, Loader2 } from 'lucide-react';
 
 export const LoginView = () => {
-  const { setIsLoggedIn, setActiveScreen } = useApp();
+  const { login, setActiveScreen } = useApp();
   const [authMethod, setAuthMethod] = useState('fido2'); // 'fido2' | 'totp' | 'mtls'
   const [showPass, setShowPass] = useState(false);
-  const [passphrase, setPassphrase] = useState('••••••••••••••••••••••••••••');
+  const [email, setEmail] = useState('e.rostova@med.stanford.edu');
+  const [passphrase, setPassphrase] = useState('researcher123');
+  const [selectedRole, setSelectedRole] = useState('researcher');
+  const [availableRoles, setAvailableRoles] = useState([]);
+  const [rememberMe, setRememberMe] = useState(true);
   const [idp, setIdp] = useState('Stanford Medicine / Health Care SSO');
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState(null);
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    setIsLoggedIn(true);
-    setActiveScreen('dashboard');
+    setErrorMessage(null);
+    setLoading(true);
+    try {
+      await login(email, passphrase, selectedRole, rememberMe);
+    } catch (err) {
+      if (err.available_roles) {
+        setAvailableRoles(err.available_roles);
+      }
+      setErrorMessage(err.message || 'Authentication failed. Please verify credentials.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -163,6 +179,103 @@ export const LoginView = () => {
               </div>
             </div>
 
+            {/* Error Banner */}
+            {errorMessage && (
+              <div style={{
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: '6px',
+                padding: '10px 12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                color: '#f87171',
+                fontSize: '11px'
+              }}>
+                <AlertCircle size={15} style={{ flexShrink: 0 }} />
+                <span>{errorMessage}</span>
+              </div>
+            )}
+
+            {/* Quick Demo Credential Pills */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>QUICK SEED CREDENTIALS (CLICK TO FILL):</span>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail('e.rostova@med.stanford.edu');
+                    setPassphrase('researcher123');
+                    setErrorMessage(null);
+                  }}
+                  style={{
+                    background: 'var(--bg-nested)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: '4px',
+                    padding: '3px 8px',
+                    fontSize: '10px',
+                    color: 'var(--accent-teal)',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Researcher (Dr. Elena)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail('admin@consortium.org');
+                    setPassphrase('admin123');
+                    setErrorMessage(null);
+                  }}
+                  style={{
+                    background: 'var(--bg-nested)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: '4px',
+                    padding: '3px 8px',
+                    fontSize: '10px',
+                    color: '#a855f7',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Consortium Admin
+                </button>
+              </div>
+            </div>
+
+            {/* Account Role Selector */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>
+                  ACCOUNT TYPE / ROLE
+                </label>
+                <span style={{ fontSize: '10px', color: 'var(--accent-teal)' }}>Same email supported across roles</span>
+              </div>
+              <div style={{ position: 'relative' }}>
+                <select
+                  value={selectedRole}
+                  onChange={(e) => setSelectedRole(e.target.value)}
+                  style={{
+                    width: '100%',
+                    height: '36px',
+                    background: 'var(--bg-nested)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: '6px',
+                    padding: '0 10px',
+                    color: 'var(--text-primary)',
+                    fontSize: '12px',
+                    outline: 'none',
+                    appearance: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <option value="researcher">Researcher (Clinical Investigator)</option>
+                  <option value="admin">Consortium Administrator</option>
+                  <option value="hospital_operator">Hospital Operator (Clinical Node)</option>
+                </select>
+                <ChevronDown size={14} color="var(--text-muted)" style={{ position: 'absolute', right: '10px', top: '11px', pointerEvents: 'none' }} />
+              </div>
+            </div>
+
             {/* Email / Identifier */}
             <div>
               <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px' }}>
@@ -171,7 +284,10 @@ export const LoginView = () => {
               <div style={{ position: 'relative' }}>
                 <input
                   type="email"
-                  defaultValue="e.rostova@med.stanford.edu"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="e.rostova@med.stanford.edu"
                   style={{
                     width: '100%',
                     height: '36px',
@@ -201,8 +317,10 @@ export const LoginView = () => {
               <div style={{ position: 'relative' }}>
                 <input
                   type={showPass ? 'text' : 'password'}
+                  required
                   value={passphrase}
                   onChange={(e) => setPassphrase(e.target.value)}
+                  placeholder="Enter cryptographic passphrase"
                   style={{
                     width: '100%',
                     height: '36px',
@@ -213,7 +331,7 @@ export const LoginView = () => {
                     color: 'var(--text-primary)',
                     fontSize: '12px',
                     outline: 'none',
-                    letterSpacing: showPass ? 'normal' : '0.2em'
+                    letterSpacing: showPass ? 'normal' : '0.15em'
                   }}
                 />
                 <button
@@ -291,7 +409,13 @@ export const LoginView = () => {
 
             {/* Remember TPM Session */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <input type="checkbox" id="remSession" defaultChecked style={{ accentColor: 'var(--brand-blue)' }} />
+              <input
+                type="checkbox"
+                id="remSession"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                style={{ accentColor: 'var(--brand-blue)' }}
+              />
               <label htmlFor="remSession" style={{ fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                 Remember hardware TPM-bound session (12h)
               </label>
@@ -300,16 +424,31 @@ export const LoginView = () => {
             {/* Submit Button */}
             <button
               type="submit"
+              disabled={loading}
               className="btn btn-primary"
               style={{
                 height: '38px',
                 fontSize: '13px',
                 fontWeight: '600',
-                marginTop: '6px'
+                marginTop: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                opacity: loading ? 0.75 : 1
               }}
             >
-              <Lock size={14} />
-              <span>Authenticate &amp; Verify Enclave Session</span>
+              {loading ? (
+                <>
+                  <Loader2 size={15} className="spin" />
+                  <span>Authenticating with Backend...</span>
+                </>
+              ) : (
+                <>
+                  <Lock size={14} />
+                  <span>Authenticate &amp; Verify Enclave Session</span>
+                </>
+              )}
             </button>
 
             {/* Links */}
@@ -323,6 +462,25 @@ export const LoginView = () => {
               >
                 Request Consortium Access
               </span>
+            </div>
+
+            <div style={{ textAlign: 'center', marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--border-subtle)' }}>
+              <button
+                type="button"
+                onClick={() => setActiveScreen('home')}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  fontSize: '11px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <span>← Return to Platform Homepage</span>
+              </button>
             </div>
           </form>
         </div>

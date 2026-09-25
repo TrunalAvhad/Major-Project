@@ -43,9 +43,9 @@ export const ProfileView = () => {
             <KeyRound size={12} />
             <span>Rotate FIDO2 Security Key</span>
           </button>
-          <button className="btn btn-primary" onClick={() => alert('IRB Signoff Dossier exported as encrypted PDF.')}>
+          <button className="btn btn-primary" onClick={() => alert('Displaying IRB Signoff Dossier directly in verified profile credential view.')}>
             <Download size={12} />
-            <span>Export IRB Signoff Dossier</span>
+            <span>View IRB Signoff Dossier</span>
           </button>
         </div>
       </div>

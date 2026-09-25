@@ -241,9 +241,9 @@ export const HospitalsView = () => {
             <Radio size={13} color="var(--accent-teal)" />
             <span>Ping All Enclaves</span>
           </button>
-          <button className="btn btn-secondary">
+          <button className="btn btn-secondary" onClick={() => alert('Opening compliance and attestation audit table in-app.')}>
             <Download size={13} />
-            <span>Export Compliance Report (.pdf)</span>
+            <span>View Compliance Report</span>
           </button>
           <button className="btn btn-primary">
             <Plus size={13} />

@@ -5,6 +5,7 @@ const connectDB = require('./database/connection/db');
 
 const authRoutes = require('./authentication/routes/authRoutes');
 const adminRoutes = require('./authentication/routes/adminRoutes');
+const trainingRequestRoutes = require('./routes/trainingRequestRoutes');
 
 const app = express();
 
@@ -15,6 +16,7 @@ app.use(cors());
 // Routes
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/training-requests', trainingRequestRoutes);
 
 // Error Handling Middleware (catch all)
 app.use((err, req, res, next) => {

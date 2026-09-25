@@ -148,9 +148,9 @@ export const AuditLogsView = () => {
               Historical Query
             </button>
           </div>
-          <button className="btn btn-primary" onClick={() => alert('Exporting Certified Ledger (.pdf)...')}>
+          <button className="btn btn-primary" onClick={() => alert('Displaying Certified Ledger directly in application session audit inspector.')}>
             <Download size={13} />
-            <span>Export Certified Ledger</span>
+            <span>View Certified Ledger</span>
           </button>
         </div>
       </div>

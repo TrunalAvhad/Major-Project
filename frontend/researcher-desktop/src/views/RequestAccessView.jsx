@@ -1,12 +1,41 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { ShieldCheck, FileCheck, CheckCircle2, KeyRound, ArrowLeft, Send } from 'lucide-react';
+import { ShieldCheck, FileCheck, CheckCircle2, KeyRound, ArrowLeft, Send, AlertCircle, Loader2, Database } from 'lucide-react';
 
 export const RequestAccessView = () => {
-  const { setActiveScreen } = useApp();
+  const { register, setActiveScreen } = useApp();
   const [role, setRole] = useState('lead');
-  const [tokenRegistered, setTokenRegistered] = useState(false);
+  const [tokenRegistered, setTokenRegistered] = useState(true);
   const [submitted, setSubmitted] = useState(false);
+  const [name, setName] = useState('Dr. trunal');
+  const [email, setEmail] = useState('trunal@rad.jhmi.edu');
+  const [password, setPassword] = useState('trunalPass123!');
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState(null);
+  const [createdUser, setCreatedUser] = useState(null);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setLoading(true);
+    try {
+      const mappedRole = role === 'admin' ? 'hospital_operator' : 'researcher';
+      const payload = {
+        name,
+        email,
+        password,
+        role: mappedRole,
+        ...(mappedRole === 'hospital_operator' ? { hospital_id: 'HOSP_000001' } : {})
+      };
+      const user = await register(payload);
+      setCreatedUser(user);
+      setSubmitted(true);
+    } catch (err) {
+      setErrorMessage(err.message || 'Registration failed');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div style={{
@@ -82,20 +111,74 @@ export const RequestAccessView = () => {
             background: 'var(--bg-card)',
             border: '1px solid var(--status-healthy-border)',
             borderRadius: '8px',
-            padding: '40px',
+            padding: '36px',
             textAlign: 'center'
           }}>
             <CheckCircle2 size={48} color="var(--status-healthy)" style={{ marginBottom: '14px' }} />
-            <h2 style={{ fontSize: '18px', fontWeight: '600' }}>Application Submitted Under Protocol SEC-792-REQ</h2>
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px', maxWidth: '500px', margin: '8px auto 0 auto' }}>
-              Your application has been cryptographically signed and routed to the Consortium Security Council. Estimated review time is 36 hours.
+            <h2 style={{ fontSize: '18px', fontWeight: '600' }}>Application Recorded in Database (MongoDB Atlas)</h2>
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px', maxWidth: '520px', margin: '8px auto 0 auto' }}>
+              Your account record has been successfully created in the <code>test.users</code> collection and an immutable audit log entry was written to <code>test.auditlogs</code>.
             </p>
-            <button className="btn btn-primary" style={{ marginTop: '20px' }} onClick={() => setActiveScreen('login')}>
-              Return to Login
+
+            {createdUser && (
+              <div style={{
+                marginTop: '20px',
+                background: 'var(--bg-nested)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: '6px',
+                padding: '16px',
+                maxWidth: '460px',
+                margin: '20px auto 0 auto',
+                textAlign: 'left',
+                fontSize: '12px'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '6px' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>ASSIGNED USER ID:</span>
+                  <span className="font-mono" style={{ color: 'var(--accent-teal)', fontWeight: '600' }}>{createdUser.user_id}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>NAME:</span>
+                  <span style={{ fontWeight: '500' }}>{createdUser.name}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>EMAIL:</span>
+                  <span className="font-mono">{createdUser.email}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>ROLE:</span>
+                  <span className="badge badge-blue">{createdUser.role}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>ACCOUNT STATUS:</span>
+                  <span className="badge badge-purple" style={{ textTransform: 'uppercase' }}>{createdUser.status || 'pending'}</span>
+                </div>
+              </div>
+            )}
+
+            <button className="btn btn-primary" style={{ marginTop: '24px' }} onClick={() => setActiveScreen('login')}>
+              Proceed to Secure Login
             </button>
           </div>
         ) : (
-          <form onSubmit={(e) => { e.preventDefault(); setSubmitted(true); }} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Error Banner */}
+            {errorMessage && (
+              <div style={{
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: '6px',
+                padding: '10px 14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                color: '#f87171',
+                fontSize: '12px'
+              }}>
+                <AlertCircle size={16} style={{ flexShrink: 0 }} />
+                <span>{errorMessage}</span>
+              </div>
+            )}
+
             {/* Section 01 */}
             <div className="card">
               <div className="card-header">
@@ -105,21 +188,40 @@ export const RequestAccessView = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
                 <div>
                   <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                    FULL ACADEMIC NAME &amp; DEGREE
+                    FULL ACADEMIC NAME &amp; DEGREE *
                   </label>
                   <input
                     type="text"
-                    defaultValue="Dr. Marcus Vance, M.D., Ph.D."
+                    required
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g. Dr. trunal"
                     style={{ width: '100%', height: '34px', background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)', borderRadius: '5px', padding: '0 10px', color: 'var(--text-primary)', fontSize: '12px' }}
                   />
                 </div>
                 <div>
                   <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                    INSTITUTIONAL CLINICAL EMAIL <span style={{ color: 'var(--status-healthy)' }}>*Strictly .edu / .org</span>
+                    INSTITUTIONAL CLINICAL EMAIL * <span style={{ color: 'var(--status-healthy)' }}>*Strictly .edu / .org</span>
                   </label>
                   <input
                     type="email"
-                    defaultValue="vance@rad.jhmi.edu"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="e.g. trunal@rad.jhmi.edu"
+                    style={{ width: '100%', height: '34px', background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)', borderRadius: '5px', padding: '0 10px', color: 'var(--text-primary)', fontSize: '12px' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                    ACCOUNT PASSPHRASE * <span style={{ color: 'var(--accent-teal)' }}>(Saved to MongoDB)</span>
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Choose a secure passphrase"
                     style={{ width: '100%', height: '34px', background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)', borderRadius: '5px', padding: '0 10px', color: 'var(--text-primary)', fontSize: '12px' }}
                   />
                 </div>
@@ -133,21 +235,6 @@ export const RequestAccessView = () => {
                     <option>Charité - Universitätsmedizin Berlin</option>
                     <option>Mayo Clinic Rochester</option>
                   </select>
-                </div>
-                <div>
-                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                    CLINICAL NPI OR ACADEMIC ORCID ID
-                  </label>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <input
-                      type="text"
-                      defaultValue="0000-0002-1825-0097"
-                      style={{ flex: 1, height: '34px', background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)', borderRadius: '5px', padding: '0 10px', color: 'var(--text-primary)', fontSize: '12px' }}
-                    />
-                    <button type="button" className="btn btn-secondary" style={{ fontSize: '11px' }}>
-                      Verify Registry
-                    </button>
-                  </div>
                 </div>
               </div>
             </div>
@@ -206,7 +293,7 @@ export const RequestAccessView = () => {
                   </div>
                   <div>
                     <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                      IRB APPROVAL CERTIFICATE (.PDF WITH CRYPTOGRAPHIC SIGNATURE)
+                      IRB APPROVAL CERTIFICATE (CRYPTOGRAPHIC DIGITAL RECORD)
                     </label>
                     <div style={{
                       display: 'flex',
@@ -219,7 +306,7 @@ export const RequestAccessView = () => {
                       padding: '0 10px',
                       fontSize: '11px'
                     }}>
-                      <span className="font-mono" style={{ color: 'var(--accent-teal)' }}>📄 irb_determination_signed_jhmi_2025.pdf</span>
+                      <span className="font-mono" style={{ color: 'var(--accent-teal)' }}>📄 irb_determination_signed_jhmi_2025.cert</span>
                       <span style={{ color: 'var(--status-healthy)', fontSize: '10px' }}>SHA-256 Verified</span>
                     </div>
                   </div>
@@ -309,9 +396,30 @@ export const RequestAccessView = () => {
                 <span>Return to Secure Login</span>
               </button>
 
-              <button type="submit" className="btn btn-primary" style={{ padding: '8px 20px', fontSize: '13px' }}>
-                <Send size={14} />
-                <span>Submit Consortium Access Application</span>
+              <button
+                type="submit"
+                disabled={loading}
+                className="btn btn-primary"
+                style={{
+                  padding: '8px 20px',
+                  fontSize: '13px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  opacity: loading ? 0.75 : 1
+                }}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 size={15} className="spin" />
+                    <span>Writing to Database...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send size={14} />
+                    <span>Submit Consortium Access Application</span>
+                  </>
+                )}
               </button>
             </div>
           </form>

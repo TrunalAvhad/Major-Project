@@ -67,7 +67,7 @@ class AuthService {
       const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password, role: ROLES.HOSPITAL_OPERATOR })
       });
 
       if (response.ok) {
@@ -85,9 +85,16 @@ class AuthService {
           return user;
         }
       }
+
+      // Handle non-ok responses
+      if (response.status === 401 || response.status === 403) {
+        const errPayload = await response.json().catch(() => null);
+        const errMsg = errPayload?.error?.message || 'Invalid credentials';
+        throw new Error(`AUTH_FAILED: ${errMsg}`);
+      }
     } catch (err) {
       // If network/backend not reachable or offline workstation mode, check fallback
-      if (err.message && err.message.startsWith('HOSPITAL_ACCESS_DENIED')) {
+      if (err.message && (err.message.startsWith('HOSPITAL_ACCESS_DENIED') || err.message.startsWith('AUTH_FAILED'))) {
         throw err;
       }
     }

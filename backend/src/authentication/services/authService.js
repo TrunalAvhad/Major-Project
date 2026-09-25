@@ -38,6 +38,7 @@ const generateToken = (user) => {
     {
       sub: user.user_id,
       user_id: user.user_id,
+      account_id: user.account_id || null,
       role: user.role,
       hospital_id: user.hospital_id || null,
     },
@@ -58,7 +59,44 @@ const generateUserId = () => {
   return `USR_${crypto.randomBytes(6).toString('hex')}`;
 };
 
+/**
+ * Generates a clean human-readable account identifier based on role:
+ * Researcher: RES-XXXX
+ * Hospital:   HOS-XXXX
+ * Admin:      ADM-XXXX
+ * 
+ * @param {string} role
+ * @returns {string} e.g. "RES-001" or "RES-A1B2"
+ */
+const generateAccountId = (role) => {
+  const hex = crypto.randomBytes(3).toString('hex').toUpperCase();
+  if (role === 'researcher') return `RES-${hex}`;
+  if (role === 'hospital_operator') return `HOS-${hex}`;
+  if (role === 'admin') return `ADM-${hex}`;
+  return `ACC-${hex}`;
+};
+
+/**
+ * Validates email format for normal real-world email providers:
+ * Gmail, Outlook, Hotmail, Yahoo, University/College (.edu),
+ * Hospital (.org, .health), Company, and international domains.
+ * Does NOT restrict to Gmail or hardcode specific providers.
+ * 
+ * @param {string} email
+ * @returns {boolean}
+ */
+const isValidEmail = (email) => {
+  if (typeof email !== 'string') return false;
+  const trimmed = email.trim();
+  if (trimmed.length < 5 || trimmed.length > 254) return false;
+  // RFC 5322 compliant general email regex
+  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+  return emailRegex.test(trimmed);
+};
+
 module.exports = {
   generateToken,
   generateUserId,
+  generateAccountId,
+  isValidEmail,
 };
