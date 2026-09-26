@@ -1,0 +1,135 @@
+# ============================================================
+# Python
+# ============================================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+
+# ============================================================
+# Python Virtual Environments
+# ============================================================
+
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+
+# ============================================================
+# Environment / Secrets
+# ============================================================
+
+.env
+.env.*
+!.env.example
+
+
+# ============================================================
+# Testing / Coverage
+# ============================================================
+
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.pyre/
+.mypy_cache/
+.ruff_cache/
+
+
+# ============================================================
+# IDE / Editor
+# ============================================================
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+
+# ============================================================
+# Operating System
+# ============================================================
+
+.DS_Store
+Thumbs.db
+
+
+# ============================================================
+# Project Local Data / Generated Outputs
+# ============================================================
+
+/data/
+/datasets/
+/outputs/
+
+
+# ============================================================
+# Medical / Dataset Files
+# These should remain local and must not be committed.
+# ============================================================
+
+*.csv
+*.xls
+*.xlsx
+
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tif
+*.tiff
+*.webp
+
+# Generated dataset profiles / preprocessing manifests & reports / model
+# metadata - wherever they're output, not just under the named dirs above.
+*.json
+
+
+# ============================================================
+# Model Artifacts / Checkpoints
+# Module 6: Model Management / Module 7: Local Deep Learning Training /
+# Module 8: Resource-Aware Training
+# ============================================================
+
+/artifacts/
+/model_artifacts/
+
+*.pt
+*.pth
+*.safetensors
+
+# Module 7 FederationHandoff parameter arrays (federation.py save()/load()),
+# also written wherever Module 8's runner.py obtains a handoff after a
+# resource-aware training run.
+*.npz
+
+# Module 16 (Local Inference) writes no files - it never stores images, results,
+# or models - so it needs no ignore rules.
+
+# Module 8 outputs (resource_training_history.json, per-run
+# *_resource_statistics.json) are already covered by the blanket *.json rule
+# above - no separate pattern needed.
+
+
+# ============================================================
+# Local Model / Application Caches
+# ============================================================
+
+/.cache/
+/cache/
+
+
+# ============================================================
+# Claude Code - Personal Development Configuration
+# ============================================================
+
+.claude/
+CLAUDE.md
