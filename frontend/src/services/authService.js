@@ -55,13 +55,13 @@ class AuthService {
     return !!this.getToken() && !!this.getCurrentUser();
   }
 
-  async login(email, password, role = null, remember = true) {
-    if (!email || !password) {
-      throw new Error('Email and password are required');
+  async login(identifier, password, role = null, remember = true) {
+    if (!identifier || !password) {
+      throw new Error('Email/Registration ID and password are required');
     }
 
     try {
-      const payload = { email, password };
+      const payload = { identifier, email: identifier, password };
       if (role) payload.role = role;
 
       const response = await fetch(`${API_BASE_URL}/auth/login`, {
@@ -95,7 +95,7 @@ class AuthService {
       }
       
       // Standalone / Offline Demo Credential Fallback
-      if (email === 'e.rostova@med.stanford.edu' && password === 'researcher123') {
+      if (identifier === 'e.rostova@med.stanford.edu' && password === 'researcher123') {
         const user = {
           user_id: 'USR_r1e8a9d3c5f2',
           name: 'Dr. Elena Rostova',
@@ -108,7 +108,7 @@ class AuthService {
         return { user, access_token: token };
       }
 
-      if (email === 'operator@stjude-clinical.org' && password === 'hospital123') {
+      if ((identifier === 'operator@stjude-clinical.org' || identifier === 'HOSP_000001') && password === 'hospital123') {
         const user = {
           user_id: 'USR_h7c2d9e4a1b0',
           name: 'Dr. Marcus Vance',
@@ -123,7 +123,7 @@ class AuthService {
         return { user, access_token: token };
       }
 
-      if (email === 'admin@consortium.org' && password === 'admin123') {
+      if (identifier === 'admin@consortium.org' && password === 'admin123') {
         const user = {
           user_id: 'USR_a9921c48201f',
           name: 'Admin Security Council',
@@ -140,7 +140,7 @@ class AuthService {
     }
   }
 
-  async register({ name, email, password, role = 'researcher', hospital_id = null }) {
+  async register({ name, email, password, role = 'researcher', hospital_id = null, hospital_name = null }) {
     if (!name || !email || !password) {
       throw new Error('Name, institutional email, and passphrase are required');
     }
@@ -154,6 +154,9 @@ class AuthService {
       };
       if (hospital_id) {
         payload.hospital_id = hospital_id;
+      }
+      if (hospital_name) {
+        payload.hospital_name = hospital_name;
       }
 
       const response = await fetch(`${API_BASE_URL}/auth/register`, {

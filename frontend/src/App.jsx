@@ -17,6 +17,8 @@ import { SwitchRoleModal } from './components/modals/SwitchRoleModal';
 import { HomeView } from './views/HomeView';
 import { LoginView } from './views/LoginView';
 import { RequestAccessView } from './views/RequestAccessView';
+import { HospitalLoginView } from './views/HospitalLoginView';
+import { HospitalRegisterView } from './views/HospitalRegisterView';
 
 // Researcher / Admin Views
 import { DashboardView } from './views/DashboardView';
@@ -55,6 +57,12 @@ const MainLayout = () => {
   if (!isLoggedIn) {
     if (activeScreen === 'request-access') {
       return <RequestAccessView />;
+    }
+    if (activeScreen === 'hospital-register') {
+      return <HospitalRegisterView />;
+    }
+    if (activeScreen === 'hospital-login') {
+      return <HospitalLoginView />;
     }
     if (activeScreen === 'login') {
       return <LoginView />;

@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { Shield, Lock, Stethoscope, Microscope, LogIn, UserPlus, FileCheck } from 'lucide-react';
+import { Shield, Lock, Stethoscope, Microscope, LogIn, UserPlus, FileCheck, Building2 } from 'lucide-react';
 
 export const HomeView = () => {
   const { setActiveScreen } = useApp();
@@ -97,37 +97,36 @@ export const HomeView = () => {
             onMouseOut={(e) => e.currentTarget.style.background = '#0284c7'}
           >
             <LogIn size={16} />
-            <span>Secure Login</span>
+            <span>Secure Login as Researcher</span>
           </button>
 
           <button
-            onClick={() => setActiveScreen('request-access')}
+            onClick={() => setActiveScreen('hospital-login')}
             style={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: '10px',
               height: '46px',
-              background: 'rgba(30, 41, 59, 0.8)',
-              color: '#f8fafc',
-              border: '1px solid rgba(71, 85, 105, 0.6)',
+              background: 'linear-gradient(135deg, #0891b2 0%, #2563eb 100%)',
+              color: '#ffffff',
+              border: 'none',
               borderRadius: '8px',
               fontSize: '14px',
               fontWeight: '600',
               cursor: 'pointer',
+              boxShadow: '0 4px 12px rgba(8, 145, 178, 0.3)',
               transition: 'all 0.15s ease'
             }}
             onMouseOver={(e) => {
-              e.currentTarget.style.background = 'rgba(51, 65, 85, 0.9)';
-              e.currentTarget.style.borderColor = '#94a3b8';
+              e.currentTarget.style.opacity = '0.9';
             }}
             onMouseOut={(e) => {
-              e.currentTarget.style.background = 'rgba(30, 41, 59, 0.8)';
-              e.currentTarget.style.borderColor = 'rgba(71, 85, 105, 0.6)';
+              e.currentTarget.style.opacity = '1';
             }}
           >
-            <UserPlus size={16} />
-            <span>Create New Account</span>
+            <Building2 size={16} />
+            <span>Secure Login as Hospital</span>
           </button>
         </div>
 
@@ -147,7 +146,7 @@ export const HomeView = () => {
             letterSpacing: '0.05em',
             marginBottom: '14px'
           }}>
-            Register for Authorized Platform Access:
+            REGISTER FOR AUTHORIZED PLATFORM ACCESS:
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
@@ -176,7 +175,7 @@ export const HomeView = () => {
             </button>
 
             <button
-              onClick={() => setActiveScreen('request-access')}
+              onClick={() => setActiveScreen('hospital-register')}
               style={{
                 display: 'flex',
                 alignItems: 'flex-start',

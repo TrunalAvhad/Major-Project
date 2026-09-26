@@ -6,7 +6,7 @@ const { ROLES } = require('../permissions/roles');
 
 
 const registerUser = async (req, res) => {
-  const { name, email, password, role, hospital_id } = req.body;
+  const { name, email, password, role, hospital_id, hospital_name } = req.body;
 
   try {
     if (!name || !email || !password || !role) {
@@ -41,14 +41,16 @@ const registerUser = async (req, res) => {
       if (!hospital_id) {
         return res.status(400).json({
           success: false,
-          error: { code: 'VALIDATION_ERROR', message: 'hospital_id is required for hospital_operator' }
+          error: { code: 'VALIDATION_ERROR', message: 'hospital_id (Registration ID) is required for hospital_operator' }
         });
       }
-      const hospitalExists = await Hospital.findOne({ hospital_id });
+      let hospitalExists = await Hospital.findOne({ hospital_id });
       if (!hospitalExists) {
-        return res.status(400).json({
-          success: false,
-          error: { code: 'VALIDATION_ERROR', message: 'Provided hospital_id does not exist' }
+        // Auto-create hospital node record if registering new hospital node
+        hospitalExists = await Hospital.create({
+          hospital_id,
+          name: hospital_name || `${name}'s Clinical AI Node`,
+          status: 'active'
         });
       }
     }
@@ -122,25 +124,36 @@ const registerUser = async (req, res) => {
 };
 
 const loginUser = async (req, res) => {
-  const { email, password, role } = req.body;
+  const { email, password, role, identifier } = req.body;
+  const loginId = identifier || email;
 
   try {
-    if (!email || !password) {
+    if (!loginId || !password) {
       return res.status(400).json({
         success: false,
-        error: { code: 'VALIDATION_ERROR', message: 'Please provide email and password' }
+        error: { code: 'VALIDATION_ERROR', message: 'Please provide email/registration ID and password' }
       });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedId = loginId.toLowerCase().trim();
     let user = null;
+
+    // Search by email OR hospital_id OR account_id
+    const searchFilter = {
+      $or: [
+        { email: normalizedId },
+        { hospital_id: loginId },
+        { account_id: loginId },
+        { user_id: loginId }
+      ]
+    };
 
     if (role) {
       // Direct role-specific query
-      user = await User.findOne({ email: normalizedEmail, role }).select('+password_hash');
+      user = await User.findOne({ ...searchFilter, role }).select('+password_hash');
     } else {
-      // Find all accounts matching this email across roles
-      const matchingUsers = await User.find({ email: normalizedEmail }).select('+password_hash');
+      // Find all accounts matching this identifier across roles
+      const matchingUsers = await User.find(searchFilter).select('+password_hash');
       if (matchingUsers.length === 1) {
         user = matchingUsers[0];
       } else if (matchingUsers.length > 1) {
@@ -148,7 +161,7 @@ const loginUser = async (req, res) => {
           success: false,
           error: {
             code: 'ROLE_SELECTION_REQUIRED',
-            message: 'Multiple accounts exist for this email. Please select your account role to proceed.',
+            message: 'Multiple accounts exist for this identifier. Please select your account role to proceed.',
             available_roles: matchingUsers.map(u => ({ role: u.role, account_id: u.account_id }))
           }
         });
@@ -163,7 +176,7 @@ const loginUser = async (req, res) => {
         ip_address: req.ip,
         user_agent: req.get('User-Agent'),
         success: false,
-        metadata: { email_attempt: normalizedEmail, role_attempt: role || null }
+        metadata: { email_attempt: normalizedId, role_attempt: role || null }
       });
       return res.status(401).json({
         success: false,
