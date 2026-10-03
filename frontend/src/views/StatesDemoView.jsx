@@ -53,10 +53,6 @@ export const StatesDemoView = () => {
             <Download size={13} />
             <span>Export Model Weights</span>
           </button>
-          <button className="btn btn-secondary" onClick={() => setActiveModal('switchRole')}>
-            <ArrowLeftRight size={13} />
-            <span>Switch Role (Researcher ⇄ Admin)</span>
-          </button>
         </div>
       </div>
 
@@ -143,9 +139,9 @@ export const StatesDemoView = () => {
             <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '6px', lineHeight: 1.4 }}>
               Under Module 1 RBAC policy, this action requires Consortium Administrator credentials. Your current role is <strong>Lead FL Investigator (Level 3)</strong>.
             </p>
-            <button className="btn btn-primary" style={{ marginTop: '14px' }} onClick={() => setActiveModal('switchRole')}>
-              Switch Role to Consortium Admin
-            </button>
+            <div style={{ marginTop: '14px', display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'rgba(139, 92, 246, 0.15)', border: '1px solid rgba(139, 92, 246, 0.4)', borderRadius: '4px', padding: '6px 12px', fontSize: '11px', color: '#c084fc', fontWeight: '600' }}>
+              <span>Strict RBAC Enforced • Authenticate as Consortium Admin</span>
+            </div>
           </div>
         )}
 

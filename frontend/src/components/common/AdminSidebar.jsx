@@ -2,53 +2,44 @@ import React from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   LayoutDashboard,
+  ShieldAlert,
+  Layers,
   Building2,
   Network,
   Cpu,
-  FlaskConical,
-  Activity,
+  Users,
   ShieldCheck,
   FileText,
-  Bell,
-  MessageSquare,
   Settings,
-  Users,
-  Layers,
-  ArrowLeftRight,
   LogOut,
-  Lock
+  UserCheck
 } from 'lucide-react';
 
-export const Sidebar = () => {
+export const AdminSidebar = () => {
   const {
     activeScreen,
     setActiveScreen,
-    userRole,
-    setActiveModal,
     currentUser,
-    notificationsCount,
-    messagesCount,
     logout
   } = useApp();
 
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'hospitals', label: 'Hospitals', icon: Building2 },
-    { id: 'training', label: 'Federated Training', icon: Network },
-    { id: 'models', label: 'Models', icon: Cpu },
-    { id: 'experiments', label: 'Experiments', icon: FlaskConical },
-    { id: 'monitoring', label: 'Monitoring', icon: Activity },
-    { id: 'security', label: 'Security', icon: ShieldCheck },
+    { id: 'dashboard', label: 'Admin Overview', icon: LayoutDashboard },
+    { id: 'approvals', label: 'Researcher Approvals', icon: UserCheck },
+    { id: 'disease-models', label: 'Disease Models', icon: Layers },
+    { id: 'hospitals', label: 'Hospital Nodes', icon: Building2 },
+    { id: 'training', label: 'Training Requests', icon: Network },
+    { id: 'models', label: 'Global Models', icon: Cpu },
+    { id: 'users', label: 'User Management', icon: Users },
+    { id: 'security', label: 'Platform Security', icon: ShieldCheck },
     { id: 'audit', label: 'Audit Logs', icon: FileText },
-    { id: 'notifications', label: 'Notifications', icon: Bell, badge: notificationsCount },
-    { id: 'messages', label: 'Messages', icon: MessageSquare, badge: messagesCount },
-    { id: 'settings', label: 'Settings & Profile', icon: Settings },
+    { id: 'settings', label: 'System Settings', icon: Settings },
   ];
 
   return (
     <aside style={{
-      width: '230px',
-      minWidth: '230px',
+      width: '235px',
+      minWidth: '235px',
       height: '100%',
       background: 'var(--bg-sidebar)',
       borderRight: '1px solid var(--border-subtle)',
@@ -66,20 +57,20 @@ export const Sidebar = () => {
               width: '28px',
               height: '28px',
               borderRadius: '6px',
-              background: 'linear-gradient(135deg, #2563eb, #06b6d4)',
+              background: 'linear-gradient(135deg, #7c3aed, #a855f7)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              boxShadow: '0 0 10px rgba(37, 99, 235, 0.4)'
+              boxShadow: '0 0 10px rgba(124, 58, 237, 0.4)'
             }}>
-              <Network size={16} color="#ffffff" />
+              <ShieldAlert size={16} color="#ffffff" />
             </div>
             <div>
               <div style={{ fontWeight: '700', fontSize: '13px', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                MedFL<span style={{ color: 'var(--brand-blue)' }}>.Secure</span>
+                MedFL<span style={{ color: '#c084fc' }}>.Admin</span>
               </div>
               <div style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                Clinical Federated AI
+                Consortium Governance
               </div>
             </div>
           </div>
@@ -100,25 +91,25 @@ export const Sidebar = () => {
             </span>
           </div>
 
-          {/* Dedicated Non-Switchable Researcher Role Badge */}
+          {/* Dedicated Non-Switchable Admin Role Badge */}
           <div style={{
             marginTop: '8px',
-            background: 'rgba(37, 99, 235, 0.1)',
-            border: '1px solid rgba(37, 99, 235, 0.3)',
+            background: 'rgba(139, 92, 246, 0.12)',
+            border: '1px solid rgba(139, 92, 246, 0.35)',
             borderRadius: '4px',
             padding: '5px 8px',
             display: 'flex',
             alignItems: 'center',
             gap: '6px'
           }}>
-            <span className="pulse-dot cyan" style={{ width: '6px', height: '6px' }} />
-            <span style={{ fontSize: '10px', fontWeight: '600', color: '#93c5fd', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              ROLE: LEAD RESEARCHER
+            <span className="pulse-dot purple" style={{ width: '6px', height: '6px' }} />
+            <span style={{ fontSize: '10px', fontWeight: '600', color: '#c084fc', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              ROLE: CONSORTIUM ADMIN
             </span>
           </div>
         </div>
 
-        {/* Navigation List */}
+        {/* Admin Navigation List */}
         <nav style={{ padding: '8px 8px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -134,7 +125,7 @@ export const Sidebar = () => {
                   padding: '7px 10px',
                   borderRadius: '5px',
                   border: 'none',
-                  background: isActive ? 'var(--brand-blue)' : 'transparent',
+                  background: isActive ? 'linear-gradient(90deg, #7c3aed 0%, #6d28d9 100%)' : 'transparent',
                   color: isActive ? '#ffffff' : 'var(--text-secondary)',
                   cursor: 'pointer',
                   fontSize: '12px',
@@ -156,46 +147,12 @@ export const Sidebar = () => {
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
-                  <Icon size={15} color={isActive ? '#ffffff' : '#818cf8'} />
+                  <Icon size={15} color={isActive ? '#ffffff' : '#c084fc'} />
                   <span>{item.label}</span>
                 </div>
-                {item.badge !== undefined && item.badge > 0 && (
-                  <span style={{
-                    background: isActive ? '#1d4ed8' : '#1e293b',
-                    color: isActive ? '#ffffff' : '#94a3b8',
-                    fontSize: '10px',
-                    fontWeight: '600',
-                    padding: '1px 6px',
-                    borderRadius: '10px',
-                    border: '1px solid rgba(255,255,255,0.1)'
-                  }}>
-                    {item.badge}
-                  </span>
-                )}
               </button>
             );
           })}
-
-          {/* Quick Demo State & Dialogs item */}
-          <button
-            onClick={() => setActiveScreen('states')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '9px',
-              padding: '7px 10px',
-              borderRadius: '5px',
-              border: 'none',
-              background: activeScreen === 'states' ? 'var(--brand-blue)' : 'transparent',
-              color: activeScreen === 'states' ? '#ffffff' : 'var(--text-muted)',
-              cursor: 'pointer',
-              fontSize: '12px',
-              marginTop: '4px'
-            }}
-          >
-            <Layers size={15} color={activeScreen === 'states' ? '#ffffff' : '#64748b'} />
-            <span>States & Dialogs</span>
-          </button>
         </nav>
       </div>
 
@@ -208,33 +165,33 @@ export const Sidebar = () => {
         <div 
           onClick={() => setActiveScreen('profile')}
           style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}
-          title="View Academic Credentials & IRB Scope"
+          title="View Root Administrator Identity"
         >
           <div style={{
             width: '32px',
             height: '32px',
             borderRadius: '50%',
-            background: 'linear-gradient(135deg, #1e293b, #3b82f6)',
+            background: 'linear-gradient(135deg, #4c1d95, #7c3aed)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            border: '1px solid var(--border-strong)',
+            border: '1px solid rgba(139, 92, 246, 0.4)',
             overflow: 'hidden'
           }}>
-            <span style={{ fontWeight: '600', fontSize: '11px', color: '#ffffff' }}>ER</span>
+            <span style={{ fontWeight: '600', fontSize: '11px', color: '#ffffff' }}>AD</span>
           </div>
           <div style={{ overflow: 'hidden' }}>
             <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-primary)', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
-              {currentUser.shortName}
+              {currentUser?.name || 'Consortium Root Admin'}
             </div>
-            <div style={{ fontSize: '10px', color: 'var(--text-muted)', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
-              {currentUser.roleTag}
+            <div style={{ fontSize: '10px', color: '#c084fc', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+              Root Security Council
             </div>
           </div>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '10px', fontSize: '10px', color: 'var(--text-muted)' }}>
-          <span className="font-mono">⏱ {currentUser.sessionDuration}</span>
+          <span className="font-mono">🔐 TIER-1 ROOT</span>
           <button
             onClick={() => logout()}
             style={{
@@ -257,3 +214,5 @@ export const Sidebar = () => {
     </aside>
   );
 };
+
+export default AdminSidebar;

@@ -4,6 +4,7 @@ import { MLProvider } from './context/MLContext';
 
 // Navigation Components
 import { Sidebar } from './components/common/Sidebar';
+import { AdminSidebar } from './components/common/AdminSidebar';
 import { TopNav } from './components/common/TopNav';
 import { HospitalSidebar } from './components/common/HospitalSidebar';
 import { HospitalTopNav } from './components/common/HospitalTopNav';
@@ -12,11 +13,11 @@ import { HospitalTopNav } from './components/common/HospitalTopNav';
 import { HaltTrainingModal } from './components/modals/HaltTrainingModal';
 import { QuarantineModal } from './components/modals/QuarantineModal';
 import { ExportWeightsModal } from './components/modals/ExportWeightsModal';
-import { SwitchRoleModal } from './components/modals/SwitchRoleModal';
 
 // Auth & Homepage Views
 import { HomeView } from './views/HomeView';
 import { LoginView } from './views/LoginView';
+import { AdminLoginView } from './views/AdminLoginView';
 import { RequestAccessView } from './views/RequestAccessView';
 import { HospitalLoginView } from './views/HospitalLoginView';
 import { HospitalRegisterView } from './views/HospitalRegisterView';
@@ -52,15 +53,26 @@ import HospitalCommunicationView from './views/HospitalCommunicationView';
 import HospitalSettingsView from './views/HospitalSettingsView';
 
 const MainLayout = () => {
-  const { activeScreen, isLoggedIn, userRole } = useApp();
+  const { activeScreen, authStatus, userRole } = useApp();
+
+  if (authStatus === 'bootstrapping') {
+    return (
+      <div style={{ display: 'flex', width: '100vw', height: '100vh', justifyContent: 'center', alignItems: 'center', backgroundColor: '#111' }}>
+        <div style={{ color: '#fff', fontSize: '1.2rem' }}>Loading authentication state...</div>
+      </div>
+    );
+  }
 
   // 1. Unauthenticated state or explicitly requested Auth / Landing screens
-  if (!isLoggedIn) {
+  if (authStatus === 'unauthenticated') {
     if (activeScreen === 'request-access') {
       return <RequestAccessView />;
     }
     if (activeScreen === 'hospital-register') {
       return <HospitalRegisterView />;
+    }
+    if (activeScreen === 'admin-login') {
+      return <AdminLoginView />;
     }
     if (activeScreen === 'hospital-login') {
       return <HospitalLoginView />;
@@ -119,43 +131,56 @@ const MainLayout = () => {
     );
   }
 
-  // 3. Researcher / Consortium Admin Layout & Views
+  // 3. Admin Layout & Views
+  if (userRole === 'admin') {
+    const renderAdminScreen = () => {
+      switch (activeScreen) {
+        case 'dashboard': return <DashboardView />;
+        case 'approvals': return <AdminApprovalView />;
+        case 'disease-models': return <AdminDiseaseModelsView />;
+        case 'hospitals': return <HospitalsView />;
+        case 'training': return <FederatedTrainingView />;
+        case 'models': return <ModelsView />;
+        case 'audit': return <AuditLogsView />;
+        case 'users': return <UserManagementView />;
+        case 'security': return <SecurityView />;
+        case 'settings': return <SettingsView />;
+        case 'profile': return <ProfileView />;
+        case 'states': return <StatesDemoView />;
+        default: return <DashboardView />;
+      }
+    };
+
+    return (
+      <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+        <AdminSidebar /> 
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+          <TopNav />
+          <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+            {renderAdminScreen()}
+          </main>
+        </div>
+        <HaltTrainingModal />
+        <QuarantineModal />
+        <ExportWeightsModal />
+      </div>
+    );
+  }
+
+  // 4. Researcher Layout & Views
   const renderResearcherScreen = () => {
     switch (activeScreen) {
-      case 'dashboard':
-        return <DashboardView />;
-      case 'hospitals':
-        return <HospitalsView />;
-      case 'training':
-        return <FederatedTrainingView />;
-      case 'models':
-        return <ModelsView />;
-      case 'experiments':
-        return <ExperimentsView />;
-      case 'monitoring':
-        return <MonitoringView />;
-      case 'security':
-        return <SecurityView />;
-      case 'audit':
-        return <AuditLogsView />;
-      case 'notifications':
-        return <NotificationsView />;
-      case 'messages':
-        return <MessagesView />;
-      case 'users':
-        return <UserManagementView />;
-      case 'settings':
-        return <SettingsView />;
-      case 'profile':
-        return <ProfileView />;
-      case 'states':
-        return <StatesDemoView />;
-      case 'approvals':
-        return <AdminApprovalView />;
-      case 'disease-models':
-        return <AdminDiseaseModelsView />;
-      default:
-        return <DashboardView />;
+      case 'dashboard': return <DashboardView />;
+      case 'hospitals': return <HospitalsView />;
+      case 'training': return <FederatedTrainingView />;
+      case 'models': return <ModelsView />;
+      case 'experiments': return <ExperimentsView />;
+      case 'monitoring': return <MonitoringView />;
+      case 'notifications': return <NotificationsView />;
+      case 'messages': return <MessagesView />;
+      case 'settings': return <SettingsView />;
+      case 'profile': return <ProfileView />;
+      default: return <DashboardView />;
     }
   };
 
@@ -173,7 +198,6 @@ const MainLayout = () => {
       <HaltTrainingModal />
       <QuarantineModal />
       <ExportWeightsModal />
-      <SwitchRoleModal />
     </div>
   );
 };

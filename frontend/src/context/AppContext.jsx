@@ -1,16 +1,14 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { authService } from '../services/authService';
+import { socketService } from '../services/socketService';
 
 const AppContext = createContext();
 
 export const AppProvider = ({ children }) => {
   const [activeScreen, setActiveScreen] = useState('home');
-  const [sessionUser, setSessionUser] = useState(() => authService.getCurrentUser());
-  const [isLoggedIn, setIsLoggedIn] = useState(() => authService.isAuthenticated());
-  const [userRole, setUserRole] = useState(() => {
-    const u = authService.getCurrentUser();
-    return u?.role || 'researcher';
-  });
+  const [sessionUser, setSessionUser] = useState(null);
+  const [authStatus, setAuthStatus] = useState('bootstrapping');
+  const [userRole, setUserRole] = useState('researcher');
 
   const [activeModal, setActiveModal] = useState(null); // 'haltTraining' | 'quarantine' | 'exportWeights' | 'switchRole'
   const [activeMockState, setActiveMockState] = useState('normal'); // 'normal' | 'loading' | 'empty' | 'error'
@@ -25,20 +23,42 @@ export const AppProvider = ({ children }) => {
 
   // Synchronize on mount if token exists
   useEffect(() => {
-    const existing = authService.getCurrentUser();
-    if (existing) {
-      setSessionUser(existing);
-      setUserRole(existing.role || 'researcher');
-      setIsLoggedIn(true);
-    }
+    const bootstrap = async () => {
+      const token = authService.getToken();
+      if (!token) {
+        setAuthStatus('unauthenticated');
+        return;
+      }
+      try {
+        const user = await authService.getMe();
+        if (user) {
+          setSessionUser(user);
+          setUserRole(user.role || 'researcher');
+          setAuthStatus('authenticated');
+          socketService.connect();
+        } else {
+          authService.clearSession();
+          setAuthStatus('unauthenticated');
+        }
+      } catch (err) {
+        authService.clearSession();
+        setAuthStatus('unauthenticated');
+      }
+    };
+    bootstrap();
+    
+    return () => {
+      socketService.disconnect();
+    };
   }, []);
 
   const login = async (email, password, role = null, remember = true) => {
     const { user } = await authService.login(email, password, role, remember);
     setSessionUser(user);
     setUserRole(user.role || 'researcher');
-    setIsLoggedIn(true);
+    setAuthStatus('authenticated');
     setActiveScreen('dashboard');
+    socketService.connect();
     return user;
   };
 
@@ -49,8 +69,9 @@ export const AppProvider = ({ children }) => {
 
   const logout = async () => {
     await authService.logout();
+    socketService.disconnect();
     setSessionUser(null);
-    setIsLoggedIn(false);
+    setAuthStatus('unauthenticated');
     setActiveScreen('login');
   };
 
@@ -99,8 +120,8 @@ export const AppProvider = ({ children }) => {
         setActiveScreen,
         userRole,
         setUserRole,
-        isLoggedIn,
-        setIsLoggedIn,
+        authStatus,
+        setAuthStatus,
         sessionUser,
         login,
         register,

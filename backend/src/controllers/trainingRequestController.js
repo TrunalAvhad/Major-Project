@@ -231,6 +231,18 @@ const participateInTrainingRequest = async (req, res) => {
 
     const participation = request.participating_hospitals.find(p => p.hospital_id === hospital_id);
 
+    try {
+      const { getIo } = require('../socket');
+      const io = getIo();
+      io.to(`request_${request_id}`).emit('hospital_participated', {
+        request_id,
+        hospital_id,
+        participation
+      });
+    } catch (socketErr) {
+      console.warn('Socket broadcast failed:', socketErr.message);
+    }
+
     res.status(200).json({
       success: true,
       data: {
@@ -307,6 +319,18 @@ const withdrawFromTrainingRequest = async (req, res) => {
       success: true,
       metadata: { hospital_id, request_id, reason: hospitalEntry.withdrawal_reason }
     });
+
+    try {
+      const { getIo } = require('../socket');
+      const io = getIo();
+      io.to(`request_${request_id}`).emit('hospital_withdrawn', {
+        request_id,
+        hospital_id,
+        participation: hospitalEntry
+      });
+    } catch (socketErr) {
+      console.warn('Socket broadcast failed:', socketErr.message);
+    }
 
     res.status(200).json({
       success: true,
@@ -389,6 +413,18 @@ const reportTrainingProgress = async (req, res) => {
         success: true,
         metadata: { hospital_id, request_id }
       });
+    }
+
+    try {
+      const { getIo } = require('../socket');
+      const io = getIo();
+      io.to(`request_${request_id}`).emit('training_progress_update', {
+        request_id,
+        hospital_id,
+        participation: entry
+      });
+    } catch (socketErr) {
+      console.warn('Socket broadcast failed:', socketErr.message);
     }
 
     res.status(200).json({ success: true, data: { participation: entry } });

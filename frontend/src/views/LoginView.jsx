@@ -112,8 +112,8 @@ export const LoginView = () => {
             </div>
 
             <div style={{ marginTop: '4px' }}>
-              <span className="badge badge-purple" style={{ fontSize: '10px' }}>
-                RESEARCHER &amp; CONSORTIUM ADMIN
+              <span className="badge badge-blue" style={{ fontSize: '10px' }}>
+                CLINICAL RESEARCH INVESTIGATOR GATEWAY
               </span>
             </div>
 
@@ -199,14 +199,13 @@ export const LoginView = () => {
 
             {/* Quick Demo Credential Pills */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>QUICK SEED CREDENTIALS (CLICK TO FILL):</span>
+              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>QUICK INVESTIGATOR CREDENTIALS (CLICK TO FILL):</span>
               <div style={{ display: 'flex', gap: '6px' }}>
                 <button
                   type="button"
                   onClick={() => {
                     setEmail('e.rostova@med.stanford.edu');
                     setPassphrase('researcher123');
-                    setSelectedRole('researcher');
                     setErrorMessage(null);
                   }}
                   style={{
@@ -219,14 +218,13 @@ export const LoginView = () => {
                     cursor: 'pointer'
                   }}
                 >
-                  Researcher (Dr. Elena)
+                  Dr. Elena Rostova (Stanford)
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    setEmail('operator@stjude-clinical.org');
-                    setPassphrase('hospital123');
-                    setSelectedRole('hospital_operator');
+                    setEmail('trunal@rad.jhmi.edu');
+                    setPassphrase('trunalPass123!');
                     setErrorMessage(null);
                   }}
                   style={{
@@ -239,62 +237,8 @@ export const LoginView = () => {
                     cursor: 'pointer'
                   }}
                 >
-                  Hospital Operator (St. Jude)
+                  Dr. Trunal Avhad (JHMI)
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('admin@consortium.org');
-                    setPassphrase('admin123');
-                    setSelectedRole('admin');
-                    setErrorMessage(null);
-                  }}
-                  style={{
-                    background: 'var(--bg-nested)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: '4px',
-                    padding: '3px 8px',
-                    fontSize: '10px',
-                    color: '#a855f7',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Consortium Admin
-                </button>
-              </div>
-            </div>
-
-            {/* Account Role Selector */}
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
-                <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>
-                  ACCOUNT TYPE / ROLE
-                </label>
-                <span style={{ fontSize: '10px', color: 'var(--accent-teal)' }}>Same email supported across roles</span>
-              </div>
-              <div style={{ position: 'relative' }}>
-                <select
-                  value={selectedRole}
-                  onChange={(e) => setSelectedRole(e.target.value)}
-                  style={{
-                    width: '100%',
-                    height: '36px',
-                    background: 'var(--bg-nested)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: '6px',
-                    padding: '0 10px',
-                    color: 'var(--text-primary)',
-                    fontSize: '12px',
-                    outline: 'none',
-                    appearance: 'none',
-                    cursor: 'pointer'
-                  }}
-                >
-                  <option value="researcher">Researcher (Clinical Investigator)</option>
-                  <option value="admin">Consortium Administrator</option>
-                  <option value="hospital_operator">Hospital Operator (Clinical Node)</option>
-                </select>
-                <ChevronDown size={14} color="var(--text-muted)" style={{ position: 'absolute', right: '10px', top: '11px', pointerEvents: 'none' }} />
               </div>
             </div>
 

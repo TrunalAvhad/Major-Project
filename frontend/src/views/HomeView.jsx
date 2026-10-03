@@ -69,64 +69,110 @@ export const HomeView = () => {
           Protected patient records and raw imaging datasets strictly remain within hospital boundaries.
         </p>
 
-        {/* Primary Action Buttons */}
+        {/* Primary Action Buttons: Exactly 3 Primary Roles */}
         <div style={{
           display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: '16px',
-          marginBottom: '32px'
+          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gap: '12px',
+          marginBottom: '28px'
         }}>
+          {/* 1. Researcher Login */}
           <button
             onClick={() => setActiveScreen('login')}
             style={{
               display: 'flex',
+              flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '10px',
-              height: '46px',
-              background: '#0284c7',
+              gap: '6px',
+              padding: '14px 12px',
+              background: 'linear-gradient(135deg, rgba(2, 132, 199, 0.2) 0%, rgba(37, 99, 235, 0.3) 100%)',
               color: '#ffffff',
-              border: 'none',
+              border: '1px solid rgba(56, 189, 248, 0.4)',
               borderRadius: '8px',
-              fontSize: '14px',
-              fontWeight: '600',
               cursor: 'pointer',
-              transition: 'background 0.15s ease'
+              transition: 'all 0.15s ease'
             }}
-            onMouseOver={(e) => e.currentTarget.style.background = '#0369a1'}
-            onMouseOut={(e) => e.currentTarget.style.background = '#0284c7'}
+            onMouseOver={(e) => {
+              e.currentTarget.style.background = 'linear-gradient(135deg, rgba(2, 132, 199, 0.35) 0%, rgba(37, 99, 235, 0.45) 100%)';
+              e.currentTarget.style.borderColor = '#38bdf8';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.background = 'linear-gradient(135deg, rgba(2, 132, 199, 0.2) 0%, rgba(37, 99, 235, 0.3) 100%)';
+              e.currentTarget.style.borderColor = 'rgba(56, 189, 248, 0.4)';
+            }}
           >
-            <LogIn size={16} />
-            <span>Secure Login as Researcher</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Microscope size={17} color="#38bdf8" />
+              <span style={{ fontSize: '13px', fontWeight: '700' }}>Login as Researcher</span>
+            </div>
+            <span style={{ fontSize: '10px', color: '#94a3b8' }}>Lead FL Investigator</span>
           </button>
 
+          {/* 2. Hospital Login */}
           <button
             onClick={() => setActiveScreen('hospital-login')}
             style={{
               display: 'flex',
+              flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '10px',
-              height: '46px',
-              background: 'linear-gradient(135deg, #0891b2 0%, #2563eb 100%)',
+              gap: '6px',
+              padding: '14px 12px',
+              background: 'linear-gradient(135deg, rgba(8, 145, 178, 0.2) 0%, rgba(16, 185, 129, 0.25) 100%)',
               color: '#ffffff',
-              border: 'none',
+              border: '1px solid rgba(45, 212, 191, 0.4)',
               borderRadius: '8px',
-              fontSize: '14px',
-              fontWeight: '600',
               cursor: 'pointer',
-              boxShadow: '0 4px 12px rgba(8, 145, 178, 0.3)',
               transition: 'all 0.15s ease'
             }}
             onMouseOver={(e) => {
-              e.currentTarget.style.opacity = '0.9';
+              e.currentTarget.style.background = 'linear-gradient(135deg, rgba(8, 145, 178, 0.35) 0%, rgba(16, 185, 129, 0.4) 100%)';
+              e.currentTarget.style.borderColor = '#2dd4bf';
             }}
             onMouseOut={(e) => {
-              e.currentTarget.style.opacity = '1';
+              e.currentTarget.style.background = 'linear-gradient(135deg, rgba(8, 145, 178, 0.2) 0%, rgba(16, 185, 129, 0.25) 100%)';
+              e.currentTarget.style.borderColor = 'rgba(45, 212, 191, 0.4)';
             }}
           >
-            <Building2 size={16} />
-            <span>Secure Login as Hospital</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Building2 size={17} color="#2dd4bf" />
+              <span style={{ fontSize: '13px', fontWeight: '700' }}>Login as Hospital</span>
+            </div>
+            <span style={{ fontSize: '10px', color: '#94a3b8' }}>Clinical Node Operator</span>
+          </button>
+
+          {/* 3. Admin Login */}
+          <button
+            onClick={() => setActiveScreen('admin-login')}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              padding: '14px 12px',
+              background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.2) 0%, rgba(168, 85, 247, 0.25) 100%)',
+              color: '#ffffff',
+              border: '1px solid rgba(192, 132, 252, 0.4)',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.background = 'linear-gradient(135deg, rgba(124, 58, 237, 0.35) 0%, rgba(168, 85, 247, 0.4) 100%)';
+              e.currentTarget.style.borderColor = '#c084fc';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.background = 'linear-gradient(135deg, rgba(124, 58, 237, 0.2) 0%, rgba(168, 85, 247, 0.25) 100%)';
+              e.currentTarget.style.borderColor = 'rgba(192, 132, 252, 0.4)';
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Lock size={17} color="#c084fc" />
+              <span style={{ fontSize: '13px', fontWeight: '700' }}>Login as Admin</span>
+            </div>
+            <span style={{ fontSize: '10px', color: '#94a3b8' }}>Consortium Security Council</span>
           </button>
         </div>
 

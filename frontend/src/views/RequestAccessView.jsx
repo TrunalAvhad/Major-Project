@@ -4,8 +4,7 @@ import { ShieldCheck, FileCheck, CheckCircle2, KeyRound, ArrowLeft, Send, AlertC
 
 export const RequestAccessView = () => {
   const { register, setActiveScreen } = useApp();
-  const [role, setRole] = useState('researcher');
-  const [hospitalId, setHospitalId] = useState('HOSP_000001');
+  const [institution, setInstitution] = useState('Johns Hopkins Medicine');
   const [tokenRegistered, setTokenRegistered] = useState(true);
   const [submitted, setSubmitted] = useState(false);
   const [name, setName] = useState('Dr. Trunal Avhad');
@@ -24,8 +23,7 @@ export const RequestAccessView = () => {
         name,
         email,
         password,
-        role,
-        ...(role === 'hospital_operator' ? { hospital_id: hospitalId } : {})
+        role: 'researcher'
       };
       const user = await register(payload);
       setCreatedUser(user);
@@ -227,18 +225,15 @@ export const RequestAccessView = () => {
                 </div>
                 <div>
                   <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                    SPONSORING INSTITUTION (FEDERATED PARTNER NODE)
+                    PRIMARY AFFILIATED INSTITUTION / RESEARCH CENTER
                   </label>
-                  <select
-                    value={hospitalId}
-                    onChange={(e) => setHospitalId(e.target.value)}
+                  <input
+                    type="text"
+                    value={institution}
+                    onChange={(e) => setInstitution(e.target.value)}
+                    placeholder="e.g. Johns Hopkins Medicine"
                     style={{ width: '100%', height: '34px', background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)', borderRadius: '5px', padding: '0 10px', color: 'var(--text-primary)', fontSize: '12px' }}
-                  >
-                    <option value="HOSP_000001">St. Jude Clinical Node (HOSP_000001)</option>
-                    <option value="HOSP_000002">Johns Hopkins Medicine (HOSP_000002)</option>
-                    <option value="HOSP_000003">Stanford Medicine (HOSP_000003)</option>
-                    <option value="HOSP_000004">Mayo Clinic Rochester (HOSP_000004)</option>
-                  </select>
+                  />
                 </div>
               </div>
             </div>
@@ -246,41 +241,7 @@ export const RequestAccessView = () => {
             {/* Section 02 */}
             <div className="card">
               <div className="card-header">
-                <span className="card-title">02. REQUESTED FEDERATED ROLE &amp; OPERATIONAL SCOPE</span>
-                <span className="badge" style={{ background: 'rgba(255,255,255,0.06)' }}>RBAC DELEGATION</span>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
-                {[
-                  { id: 'researcher', title: 'Lead Investigator / Researcher', sub: 'MODEL ARCHITECT & COORDINATOR', desc: 'Permits defining neural architectures, initiating FedAvg/FedProx rounds, orchestrating global aggregations.', scope: 'LEVEL 3' },
-                  { id: 'hospital_operator', title: 'Hospital Operator / Node Admin', sub: 'CLINICAL ENCLAVE OPERATOR', desc: 'Responsible for local PACS connectors, enclave firewalls, hardware SGX lifecycle on-premise, and local model training.', scope: 'LEVEL 2' },
-                  { id: 'admin', title: 'Consortium Administrator', sub: 'INFRASTRUCTURE & SECURITY', desc: 'Responsible for security council attestations, hospital node approvals, user management, and system RBAC.', scope: 'LEVEL 4' }
-                ].map((item) => (
-                  <div
-                    key={item.id}
-                    onClick={() => setRole(item.id)}
-                    style={{
-                      padding: '12px',
-                      borderRadius: '6px',
-                      background: role === item.id ? 'rgba(37, 99, 235, 0.08)' : 'var(--bg-nested)',
-                      border: `1px solid ${role === item.id ? 'var(--brand-blue)' : 'var(--border-subtle)'}`,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                      <strong style={{ fontSize: '12px' }}>{item.title}</strong>
-                      <span className="badge badge-blue" style={{ fontSize: '9px' }}>{item.scope}</span>
-                    </div>
-                    <div style={{ fontSize: '9px', color: 'var(--accent-teal)', fontWeight: '600', marginBottom: '6px' }}>{item.sub}</div>
-                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', lineHeight: 1.35 }}>{item.desc}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Section 03 */}
-            <div className="card">
-              <div className="card-header">
-                <span className="card-title">03. INSTITUTIONAL REVIEW BOARD (IRB) &amp; COMPLIANCE</span>
+                <span className="card-title">02. INSTITUTIONAL REVIEW BOARD (IRB) &amp; COMPLIANCE</span>
                 <span className="badge badge-purple">HIPAA / GDPR BIO-ETHICS RECORD</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -334,10 +295,10 @@ export const RequestAccessView = () => {
               </div>
             </div>
 
-            {/* Section 04 */}
+            {/* Section 03 */}
             <div className="card">
               <div className="card-header">
-                <span className="card-title">04. CRYPTOGRAPHIC IDENTITY &amp; KEY ENROLLMENT</span>
+                <span className="card-title">03. CRYPTOGRAPHIC IDENTITY &amp; KEY ENROLLMENT</span>
                 <span className="badge badge-cyan">ED25519 / FIDO2 HARDWARE ATTESTATION</span>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>

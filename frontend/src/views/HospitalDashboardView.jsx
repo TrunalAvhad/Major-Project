@@ -20,7 +20,7 @@ const gb = (mb) => (mb == null ? '-' : `${(mb / 1024).toFixed(1)} GB`);
 
 const DashboardView = () => {
   const { user, hospitalId, hospitalName, setActiveTab } = useApp();
-  const { hardware, hardwareError, datasets, activeDataset, trainingJob, serviceStatus } = useML();
+  const { hardware, hardwareError, datasets = [], activeDataset, trainingJob, serviceStatus } = useML();
   const [runs, setRuns] = useState([]);
 
   useEffect(() => {
