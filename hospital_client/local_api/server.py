@@ -38,8 +38,15 @@ from urllib.parse import parse_qs, urlparse
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("ML_API_PORT", "8765"))
-ORIGINS = {o.strip() for o in os.environ.get(
-    "ML_API_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if o.strip()}
+ORIGINS = {
+    o.strip()
+    for o in os.environ.get(
+        "ML_API_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:5174,http://127.0.0.1:5174",
+    ).split(",")
+    if o.strip()
+}
 BACKEND_URL = os.environ.get("ML_BACKEND_URL", "http://localhost:5000/api/v1").rstrip("/")
 WORK_DIR = os.path.abspath(os.environ.get("ML_WORK_DIR", os.path.join(os.path.expanduser("~"), "medfl_ml_work")))
 DATASETS_DIR = os.path.join(WORK_DIR, "datasets")
