@@ -334,10 +334,12 @@ def r_list_datasets(h, m, q):
         for did in sorted(os.listdir(DATASETS_DIR)):
             if DATASET_ID_RE.match(did) and os.path.isfile(os.path.join(DATASETS_DIR, did, "source.json")):
                 s = dataset_summary(did)
+                src = _read_json(os.path.join(DATASETS_DIR, did, "source.json")) or {}
                 out.append({k: s[k] for k in ("dataset_id", "name", "source_path")} | {
                     "total_samples": (s["profile"] or {}).get("total_samples"),
                     "classes": (s["profile"] or {}).get("classes"),
                     "preprocessed": s["preprocessing"] is not None,
+                    "declared_task": src.get("declared_task"),
                 })
     return {"datasets": out}
 
@@ -594,6 +596,171 @@ def r_predict(h, m, q):
         raise ApiError(400, _failure_message(proc.stdout.splitlines(), proc.returncode))
 
 
+def r_evaluate_eligibility(h, m, q):
+    from hospital_client.federation.eligibility import evaluate_eligibility
+    body = h.json_body()
+    job = body.get("job")
+    dataset_id = body.get("dataset_id")
+    if not job or not dataset_id:
+        raise ApiError(400, "job and dataset_id are required")
+        
+    m5 = _require_preprocessed(dataset_id)
+    d = dataset_dir(dataset_id)
+    src = _read_json(os.path.join(d, "source.json")) or {}
+    
+    # Use explicit declared_task — NEVER use dataset name as task
+    hospital_task = src.get("declared_task")  # None if not yet associated
+    
+    # Hardware compatibility - check recommendations
+    recs = _read_json(os.path.join(d, "recommendations.json")) or {}
+    
+    # Dataset profile from M5 (class list comes from M4 profile for eligibility)
+    m4_profile = _read_json(os.path.join(d, "m4", "dataset_profile.json")) or {}
+    m5_profile = _read_json(os.path.join(m5, "preprocessing_report.json")) or {}
+    # Use M4 classes as the authoritative class list; M5 may also have it
+    profile = {"classes": m4_profile.get("classes", m5_profile.get("classes", []))}
+    
+    res = evaluate_eligibility(
+        hospital_task=hospital_task,
+        hospital_dataset_profile=profile,
+        manifest_dir=m5,
+        job=job,
+        m8_recommendation_set=recs
+    )
+    return res.to_dict()
+
+
+def r_set_dataset_task(h, m, q):
+    """Associate a local dataset with an explicit declared_task."""
+    dataset_id = m.group(1)
+    d = dataset_dir(dataset_id)
+    body = h.json_body()
+    declared_task = body.get("declared_task")
+    if declared_task is not None and (not isinstance(declared_task, str) or not declared_task.strip()):
+        raise ApiError(400, "declared_task must be a non-empty string or null.")
+    
+    src_path = os.path.join(d, "source.json")
+    src = _read_json(src_path) or {}
+    if declared_task is not None:
+        src["declared_task"] = declared_task.strip()
+    else:
+        src.pop("declared_task", None)
+    with open(src_path, "w", encoding="utf-8") as f:
+        json.dump(src, f)
+    return {"dataset_id": dataset_id, "declared_task": src.get("declared_task")}
+
+
+def r_get_task_vocabulary(h, m, q):
+    """Return available task names from federation jobs via the backend."""
+    try:
+        token = h.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+        req = urllib.request.Request(
+            f"{BACKEND_URL}/federation/jobs",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.load(r)
+        jobs = data.get("jobs", [])
+        tasks = sorted(set(j.get("task", "") for j in jobs if j.get("task")))
+        return {"tasks": tasks}
+    except Exception:
+        return {"tasks": []}
+
+
+def r_federated_train(h, m, q):
+    from hospital_client.federation.manifest_filter import create_job_manifests
+    body = h.json_body()
+    job = body.get("job")
+    dataset_id = body.get("dataset_id")
+    if not job or not dataset_id:
+        raise ApiError(400, "job and dataset_id are required")
+        
+    m5 = _require_preprocessed(dataset_id)
+    class_mapping = job.get("class_mapping", {})
+    
+    # Create run-isolated filtered manifests
+    federation_runs_dir = os.path.join(WORK_DIR, "federation_runs")
+    run_dir, counts = create_job_manifests(
+        job_id=job["federation_job_id"],
+        original_manifest_dir=m5,
+        output_base_dir=federation_runs_dir,
+        class_mapping=class_mapping
+    )
+    
+    if counts.get("train", 0) == 0:
+        raise ApiError(400, "Filtered training dataset has 0 samples for this job's classes.")
+    
+    dataset_name = _read_json(os.path.join(dataset_dir(dataset_id), "source.json"))["name"]
+    model_id = f"FED_{job['federation_job_id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    
+    os.makedirs(TRAINED_DIR, exist_ok=True)
+    meta = {
+        "dataset_id": dataset_id,
+        "dataset_name": dataset_name,
+        "choice": "federated",
+        "model_id": model_id,
+        "job_id": job["federation_job_id"],
+        "run_dir": run_dir,
+        "started_at": datetime.now().isoformat()
+    }
+    
+    # Build the M8 train command pointing at the run-isolated directory
+    # --canonical-mapping passes the job's class mapping to M7 via M8
+    cmd = _module_cmd(
+        "hospital_client.resource_training", "train", 
+        "--dataset", run_dir, 
+        "--output", TRAINED_DIR,
+        "--model-id", model_id, 
+        "--architecture", job["architecture"],
+        "--canonical-mapping", json.dumps(class_mapping),
+        "--federation-job-architecture", job["architecture"]
+    )
+    
+    # Pass epochs if specified in training requirements
+    reqs = job.get("training_requirements") or {}
+    epochs = reqs.get("epochs")
+    if epochs is not None:
+        cmd.extend(["--epochs", str(epochs)])
+    
+    round_id = body.get("round_id")
+    auth_token = body.get("auth_token")
+    api_url = body.get("api_url")
+
+    # Find the active round to extract canonical base model provenance
+    active_round = next((r for r in job.get("rounds", []) if r["round_id"] == round_id), None)
+    if active_round and active_round.get("base_model_id"):
+        cmd.extend([
+            "--canonical-base-model-id", active_round["base_model_id"],
+            "--canonical-base-model-version", str(active_round["base_model_version"]),
+            "--canonical-base-model-checksum", active_round["base_model_checksum"]
+        ])
+
+    def _finalize(j):
+        res = training_run(model_id)
+        if (res.get("result") or {}).get("ready_for_federation"):
+            handoff_dir = os.path.join(TRAINED_DIR, f"{model_id}_federation_handoff")
+            if os.path.isdir(handoff_dir) and auth_token and api_url and round_id:
+                import urllib.request
+                import json
+                req_url = f"{api_url}/federation/jobs/{job['federation_job_id']}/rounds/{round_id}/submit"
+                data = json.dumps({"handoff_dir": handoff_dir}).encode('utf-8')
+                req = urllib.request.Request(req_url, data=data, headers={
+                    'Content-Type': 'application/json',
+                    'Authorization': f"Bearer {auth_token}"
+                }, method='POST')
+                try:
+                    with urllib.request.urlopen(req) as response:
+                        print("Automatically submitted federation handoff to M9.")
+                except Exception as e:
+                    print("Failed to auto-submit federation handoff to M9:", e)
+        return res
+
+    job_handle = start_job("train", cmd, _finalize, meta)
+    with open(os.path.join(TRAINED_DIR, f"{model_id}_run.json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+    return 202, job_handle.to_dict()
+
+
 ROUTES = [
     ("GET", re.compile(r"/api/ml/health"), r_health, True),
     ("GET", re.compile(r"/api/ml/resources"), r_resources, False),
@@ -611,6 +778,10 @@ ROUTES = [
     ("GET", re.compile(r"/api/ml/training-runs/([A-Za-z0-9_\-]+)/plots/([a-z_]+\.png)"), r_get_plot, False),
     ("GET", re.compile(r"/api/ml/models"), r_models, False),
     ("POST", re.compile(r"/api/ml/predict"), r_predict, False),
+    ("POST", re.compile(r"/api/ml/federation/evaluate-eligibility"), r_evaluate_eligibility, False),
+    ("POST", re.compile(r"/api/ml/federation/participate"), r_federated_train, False),
+    ("POST", re.compile(r"/api/ml/datasets/([0-9a-f]{12})/set-task"), r_set_dataset_task, False),
+    ("GET", re.compile(r"/api/ml/federation/task-vocabulary"), r_get_task_vocabulary, False),
 ]
 
 

@@ -27,6 +27,7 @@ export const HospitalSidebar = () => {
     { id: 'start_training', label: 'Start Local Training', icon: PlayCircle, module: 'M8' },
     { id: 'training_monitor', label: 'Training Monitor', icon: Activity, module: 'M7' },
     { id: 'training_results', label: 'Training Results', icon: Award, module: 'M7/M9' },
+    { id: 'federation_status', label: 'Federation Status', icon: Activity, module: 'M9' },
     { id: 'models', label: 'Local Models', icon: Box, module: 'M6' },
     { id: 'inference', label: 'Local Inference', icon: Search, module: 'M16' },
     { id: 'communication', label: 'Communications', icon: MessageSquare, module: 'M18' },

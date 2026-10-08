@@ -45,8 +45,13 @@ def main():
                               help="With --architecture: batch size (at most the largest Module 8 measured as safe)")
     train_parser.add_argument("--epochs", type=int, default=None, help="With --architecture: number of epochs")
     train_parser.add_argument("--policy", dest="policy_path", default=None)
+    train_parser.add_argument("--canonical-mapping", default=None, help="JSON string of canonical class mapping")
+    train_parser.add_argument("--federation-job-architecture", default=None, help="Enforces that the selected model matches the federation job required architecture")
     train_parser.add_argument("--test", dest="run_test_evaluation", action="store_true", help="Run final evaluation on the test manifest")
     train_parser.add_argument("--plots", action="store_true", help="Write confusion matrix / ROC / PR plots for the test set (requires --test)")
+    train_parser.add_argument("--canonical-base-model-id", default=None, help="Round-prescribed base model ID")
+    train_parser.add_argument("--canonical-base-model-version", type=int, default=None, help="Round-prescribed base model version")
+    train_parser.add_argument("--canonical-base-model-checksum", default=None, help="Round-prescribed base model checksum")
 
     args = parser.parse_args()
 
@@ -86,11 +91,19 @@ def main():
                 available = [r.recommendation_type for r in rec_set.recommendations]
                 print(f"Error: recommendation type '{args.choice}' was not generated for this hardware. Available: {available}")
                 sys.exit(1)
+            canonical_mapping = None
+            if args.canonical_mapping:
+                canonical_mapping = json.loads(args.canonical_mapping)
 
             training_config = to_training_config(
                 chosen, model_id=args.model_id, dataset_dir=args.dataset_dir,
                 output_dir=args.output_dir, num_classes=dataset.num_classes,
                 run_test_evaluation=args.run_test_evaluation,
+                canonical_mapping=canonical_mapping,
+                federation_job_architecture=args.federation_job_architecture,
+                canonical_base_model_id=args.canonical_base_model_id,
+                canonical_base_model_version=args.canonical_base_model_version,
+                canonical_base_model_checksum=args.canonical_base_model_checksum,
             )
             print(f"Starting Module 7 training: {chosen.label} - {chosen.display_name}, {chosen.device}/{chosen.precision}, "
                   f"batch_size={chosen.batch_size}, epochs={chosen.epochs} (estimated {chosen.estimated_training_time_display})",

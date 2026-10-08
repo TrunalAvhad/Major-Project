@@ -90,3 +90,18 @@ def test_config_to_dict_roundtrips_model_config():
     d = config.to_dict()
     assert d["model_config"]["architecture"] == "resnet18"
     assert d["model_id"] == "m"
+
+def test_federation_job_architecture_invariant_check():
+    # Should pass when None
+    config_none = _base_config(federation_job_architecture=None)
+    validate_training_config(config_none)
+    
+    # Should pass when matches
+    config_match = _base_config(federation_job_architecture="resnet18")
+    validate_training_config(config_match)
+    
+    # Should fail when mismatch
+    config_mismatch = _base_config(federation_job_architecture="MobileNetV3")
+    
+    with pytest.raises(ValueError, match="Federation architecture mismatch"):
+        validate_training_config(config_mismatch)

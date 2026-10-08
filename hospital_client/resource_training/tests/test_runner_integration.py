@@ -14,6 +14,7 @@ from hospital_client.resource_training.recommender import FAST, generate_recomme
 from hospital_client.resource_training.resolved_config import to_training_config
 from hospital_client.resource_training.resource_profile import build_resource_profile
 from hospital_client.resource_training.runner import run_resource_aware_training
+from hospital_client.training.federation import validate_federation_handoff
 from hospital_client.training.result import TrainingStatus
 
 
@@ -52,6 +53,12 @@ def test_full_pipeline_cpu(real_small_dataset_dir, tmp_path):
         assert handoff is not None
         assert handoff.architecture == training_config.model_config.architecture
         assert handoff.parameter_count > 0
+        # Regression: runner must forward base_model_id/version/checksum
+        # (the old call omitted these 3 args, causing TypeError at runtime).
+        assert handoff.base_model_id == result.checkpoint_model_id
+        assert handoff.base_model_version == result.checkpoint_version
+        assert isinstance(handoff.base_model_checksum, str) and handoff.base_model_checksum
+        validate_federation_handoff(handoff)  # full structural validation
 
     # A second recommendation call after a real run should be able to see
     # the newly recorded (real, not fabricated) measured throughput.
@@ -117,3 +124,73 @@ def test_full_pipeline_cuda(real_small_dataset_dir, tmp_path):
     if result.ready_for_federation:
         assert handoff is not None
         assert handoff.device == "cuda"
+
+
+# ---------------------------------------------------------------------------
+# Focused regression: runner -> FederationHandoff base_model contract
+# ---------------------------------------------------------------------------
+
+def test_runner_handoff_base_model_fields_populated(real_small_dataset_dir, tmp_path):
+    """
+    Regression test for the runner.py -> build_federation_handoff integration.
+
+    The old call was:
+        _build_federation_handoff(result, current_config.output_dir)
+
+    After the federation.py schema update that added base_model_id,
+    base_model_version, base_model_checksum as REQUIRED fields,
+    trainer.py's build_federation_handoff wrapper was updated to populate
+    them from the TrainingResult — but the runner.py import re-uses
+    that wrapper, so the call signature hasn't changed.
+
+    This test verifies:
+    - No TypeError is raised (old code: missing 4 required positional arguments)
+    - The returned FederationHandoff passes full structural validation
+    - base_model_id is the checkpoint model id (non-empty string)
+    - base_model_version is the checkpoint version (positive int)
+    - base_model_checksum is a non-empty hex string
+    - num_train_samples matches the dataset
+    """
+    policy = default_policy()
+    dataset = inspect_dataset(real_small_dataset_dir)
+    profile = build_resource_profile(storage_path=str(tmp_path), check_network=False, policy=policy)
+    rec_set = generate_recommendations(profile, policy, dataset)
+    # Use whatever architecture is recommended first; this is a runner contract test.
+    rec = rec_set.recommendations[0]
+    config = to_training_config(
+        rec,
+        model_id="reg_handoff_test",
+        dataset_dir=real_small_dataset_dir,
+        output_dir=str(tmp_path / "out"),
+        num_classes=dataset.num_classes,
+    )
+    config.device = "cpu"
+    config.precision = "fp32"
+    config.epochs = 1
+
+    result, _stats, handoff = run_resource_aware_training(config, policy, None, profile)
+
+    # Training must have reached federation-ready status.
+    assert result.status == TrainingStatus.TRAINING_COMPLETED_AWAITING_FEDERATION, (
+        f"Expected TRAINING_COMPLETED_AWAITING_FEDERATION, got {result.status}. "
+        "If the dataset has no val split this is a fixture issue, not a handoff bug."
+    )
+    assert handoff is not None, "runner must return a FederationHandoff when result.ready_for_federation"
+
+    # --- Core regression: these three fields caused TypeError in the old code ---
+    assert isinstance(handoff.base_model_id, str) and handoff.base_model_id, \
+        f"base_model_id must be a non-empty string, got {handoff.base_model_id!r}"
+    assert isinstance(handoff.base_model_version, int) and handoff.base_model_version >= 1, \
+        f"base_model_version must be a positive int, got {handoff.base_model_version!r}"
+    assert isinstance(handoff.base_model_checksum, str) and handoff.base_model_checksum, \
+        f"base_model_checksum must be a non-empty string, got {handoff.base_model_checksum!r}"
+
+    # --- Values must come from the completed training result (not invented) ---
+    assert handoff.base_model_id == result.checkpoint_model_id
+    assert handoff.base_model_version == result.checkpoint_version
+
+    # --- Full structural validation via existing Module 7 validator ---
+    validate_federation_handoff(handoff)
+
+    # --- Data provenance: sample count must be positive ---
+    assert handoff.num_train_samples > 0

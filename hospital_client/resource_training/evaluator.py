@@ -103,6 +103,7 @@ class ModelAssessment:
     reason: str
     status_label: str = "Unassigned"  # set by recommender.py relative to the 3 picks
     role: Optional[str] = None        # "recommended" | "high_capacity" | "fast" | None, set by recommender.py
+    recommendation_tier: Optional[str] = None  # federation architecture eligibility tier
     time_budget_seconds: Optional[float] = None  # the (dataset-scaled) budget epochs were fitted to
     # Peak memory (MB) per safe batch-size candidate <= batch_size: the value at batch_size is
     # the one reported in memory_estimate; smaller ones keep the fixed part (weights + optimizer
@@ -131,6 +132,7 @@ class ModelAssessment:
             "reason": self.reason,
             "status_label": self.status_label,
             "role": self.role,
+            "recommendation_tier": self.recommendation_tier,
             "time_budget_seconds": self.time_budget_seconds,
             "batch_memory_mb": {str(k): v for k, v in self.batch_memory_mb.items()},
             "cpu_logical_cores": self.cpu_logical_cores,

@@ -23,11 +23,15 @@ def _params():
 
 
 def _valid_handoff(**overrides):
+    params = overrides.pop("parameters", _params())
     defaults = dict(
-        parameters=_params(),
+        parameters=params,
         model_id="chest_xray_resnet18",
         model_version=1,
         architecture="resnet18",
+        base_model_id="chest_xray_resnet18",
+        base_model_version=1,
+        base_model_checksum="placeholder_checksum_for_test",
         num_train_samples=100,
         class_mapping={"normal": 0, "disease": 1},
         training_metrics={"loss": 0.1, "accuracy": 0.95},

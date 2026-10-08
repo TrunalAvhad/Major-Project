@@ -28,7 +28,7 @@ from hospital_client.training.checkpoint import (
 from hospital_client.training.config import TrainingConfig, validate_training_config
 from hospital_client.training.dataloader import build_dataloaders
 from hospital_client.training.dataset import TASK_TYPE, build_preprocessing_spec
-from hospital_client.training.federation import FederationHandoff, build_federation_handoff as _build_federation_handoff
+from hospital_client.training.federation import FederationHandoff, build_federation_handoff as _build_federation_handoff, _compute_parameters_checksum
 from hospital_client.training.losses import build_loss
 from hospital_client.training.metrics import compute_classification_metrics
 from hospital_client.training.result import TrainingResult, TrainingStatus
@@ -82,6 +82,47 @@ class Trainer:
         warnings.extend(prepared.warnings)
 
         model = build_model(config.model_config).to(device)
+
+        # ── Canonical base model loading + verification (federation Round N) ──
+        # When a FederationRound prescribes a specific base model, the hospital
+        # must start from that exact artifact — not from a freshly initialised model.
+        # We load it, compute its parameter checksum, and compare against the
+        # round-prescribed checksum before a single training step executes.
+        if config.canonical_base_model_id is not None:
+            if config.canonical_base_model_version is None or config.canonical_base_model_checksum is None:
+                raise ValueError(
+                    "canonical_base_model_id is set but canonical_base_model_version or "
+                    "canonical_base_model_checksum is missing. All three fields are required together."
+                )
+            model_store_base = ModelStore(_models_dir(config.output_dir))
+            try:
+                loaded_base, _ = model_store_base.load_checkpoint(
+                    config.canonical_base_model_id,
+                    config.canonical_base_model_version,
+                    device=config.device,
+                )
+            except (FileNotFoundError, ValueError) as exc:
+                raise ValueError(
+                    f"Canonical base model '{config.canonical_base_model_id}' v{config.canonical_base_model_version} "
+                    f"is not available in the local model store. "
+                    f"Download it from the federation server before training. Detail: {exc}"
+                ) from exc
+            # Cryptographic verification: compute SHA-256 of the stored parameters
+            # and compare against the round-prescribed checksum.
+            stored_params = get_parameters(loaded_base)
+            stored_checksum = _compute_parameters_checksum(stored_params)
+            if stored_checksum != config.canonical_base_model_checksum:
+                raise ValueError(
+                    f"Canonical base model '{config.canonical_base_model_id}' v{config.canonical_base_model_version} "
+                    f"failed checksum verification.\n"
+                    f"  Expected (from round): {config.canonical_base_model_checksum}\n"
+                    f"  Computed (from store): {stored_checksum}\n"
+                    "Training refused: do not train from an unverified base model."
+                )
+            # Load the verified weights into the model that will be trained.
+            model.load_state_dict(loaded_base.state_dict())
+            del loaded_base, stored_params  # free memory before training starts
+        # ── End canonical base model section ──
         optimizer = self._build_optimizer(model)
         scheduler = self._build_scheduler(optimizer)
         # GradScaler with enabled=False is a documented no-op passthrough (PyTorch AMP docs),
@@ -349,9 +390,21 @@ def build_federation_handoff(
 ) -> FederationHandoff:
     """
     Builds the versioned Module 7 -> Module 9 contract (see federation.py)
-    from a completed TrainingResult. round_id/client_id are only ever the
-    caller-supplied real values from a future federation/identity
-    integration - Module 7 has no such context and never fabricates them.
+    from a completed TrainingResult.
+
+    Checkpoint identity (what M7 produced locally):
+        model_id / model_version  <- result.checkpoint_model_id / version
+
+    Base model provenance (what M9 requires to match the round):
+        base_model_id / version / checksum <- taken from
+        result.training_configuration["canonical_base_model_*"] when present.
+        If those fields are absent (standalone, non-federated training) the
+        old behaviour is preserved: base_model_id is set to the checkpoint ID
+        so that a handoff can still be constructed (it will be rejected by M9
+        if a canonical ID is required but missing, which is the correct outcome).
+
+    round_id/client_id are only ever the caller-supplied real values from the
+    federation integration - M7 has no such context and never fabricates them.
     """
     if not result.ready_for_federation or result.checkpoint_model_id is None or result.checkpoint_version is None:
         raise ValueError(
@@ -360,12 +413,38 @@ def build_federation_handoff(
         )
     model, _ = get_model(result.checkpoint_model_id, result.checkpoint_version, output_dir, device="cpu")
     parameters = get_parameters(model)
+    num_train_samples = result.training_metrics.get("sample_count", 0)
+    dataset_dir = result.training_configuration.get("dataset_dir")
+    if dataset_dir:
+        import os
+        import json
+        train_manifest_path = os.path.join(dataset_dir, "train_manifest.json")
+        if os.path.exists(train_manifest_path):
+            with open(train_manifest_path, "r") as f:
+                train_manifest = json.load(f)
+                expected_count = len(train_manifest.get("records", []))
+                if num_train_samples != expected_count:
+                    raise ValueError(
+                        f"Invariant violation: num_train_samples ({num_train_samples}) "
+                        f"does not equal the number of records in train_manifest.json ({expected_count})."
+                    )
+
+    # Resolve canonical base model provenance.  This is the round-prescribed
+    # starting point, NOT the locally-produced checkpoint.
+    tc = result.training_configuration
+    base_model_id       = tc.get("canonical_base_model_id")      or result.checkpoint_model_id
+    base_model_version  = tc.get("canonical_base_model_version") or result.checkpoint_version
+    base_model_checksum = tc.get("canonical_base_model_checksum") or _compute_parameters_checksum(parameters)
+
     return _build_federation_handoff(
         parameters=parameters,
         model_id=result.checkpoint_model_id,
         model_version=result.checkpoint_version,
         architecture=result.architecture,
-        num_train_samples=result.training_metrics.get("sample_count", 0),
+        base_model_id=base_model_id,
+        base_model_version=base_model_version,
+        base_model_checksum=base_model_checksum,
+        num_train_samples=num_train_samples,
         class_mapping=result.class_mapping,
         training_metrics=result.training_metrics,
         validation_metrics=result.validation_metrics,

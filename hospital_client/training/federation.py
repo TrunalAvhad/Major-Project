@@ -60,6 +60,11 @@ class FederationHandoff:
     parameter_dtypes: List[str]
     parameters_checksum: str
 
+    # Base model identity
+    base_model_id: str
+    base_model_version: int
+    base_model_checksum: str
+
     # Data provenance.
     num_train_samples: int
     num_classes: int
@@ -92,6 +97,9 @@ class FederationHandoff:
             "parameter_shapes": self.parameter_shapes,
             "parameter_dtypes": self.parameter_dtypes,
             "parameters_checksum": self.parameters_checksum,
+            "base_model_id": self.base_model_id,
+            "base_model_version": self.base_model_version,
+            "base_model_checksum": self.base_model_checksum,
             "num_train_samples": self.num_train_samples,
             "num_classes": self.num_classes,
             "class_mapping": self.class_mapping,
@@ -149,6 +157,9 @@ class FederationHandoff:
             parameter_shapes=metadata["parameter_shapes"],
             parameter_dtypes=metadata["parameter_dtypes"],
             parameters_checksum=metadata["parameters_checksum"],
+            base_model_id=metadata.get("base_model_id", ""),
+            base_model_version=metadata.get("base_model_version", 1),
+            base_model_checksum=metadata.get("base_model_checksum", ""),
             num_train_samples=metadata["num_train_samples"],
             num_classes=metadata["num_classes"],
             class_mapping=metadata["class_mapping"],
@@ -171,6 +182,9 @@ def build_federation_handoff(
     model_id: str,
     model_version: int,
     architecture: str,
+    base_model_id: str,
+    base_model_version: int,
+    base_model_checksum: str,
     num_train_samples: int,
     class_mapping: Dict[str, int],
     training_metrics: Dict[str, Any],
@@ -192,6 +206,9 @@ def build_federation_handoff(
         parameter_shapes=[list(p.shape) for p in parameters],
         parameter_dtypes=[str(p.dtype) for p in parameters],
         parameters_checksum=_compute_parameters_checksum(parameters),
+        base_model_id=base_model_id,
+        base_model_version=base_model_version,
+        base_model_checksum=base_model_checksum,
         num_train_samples=num_train_samples,
         num_classes=len(class_mapping),
         class_mapping=class_mapping,
@@ -224,6 +241,13 @@ def validate_federation_handoff(handoff: FederationHandoff) -> None:
         raise ValueError(f"model_version must be a positive integer, got {handoff.model_version!r}")
     if not handoff.architecture:
         raise ValueError("architecture must be a non-empty string.")
+    
+    if not handoff.base_model_id or not isinstance(handoff.base_model_id, str):
+        raise ValueError(f"base_model_id must be a non-empty string, got {handoff.base_model_id!r}")
+    if not isinstance(handoff.base_model_version, int) or isinstance(handoff.base_model_version, bool) or handoff.base_model_version < 1:
+        raise ValueError(f"base_model_version must be a positive integer, got {handoff.base_model_version!r}")
+    if not handoff.base_model_checksum or not isinstance(handoff.base_model_checksum, str):
+        raise ValueError("base_model_checksum must be a non-empty string.")
 
     n = handoff.parameter_count
     if n != len(handoff.parameters):

@@ -25,7 +25,11 @@ from hospital_client.training.config import TrainingConfig
 def to_training_config(
     recommendation: RecommendedConfig, model_id: str, dataset_dir: str, output_dir: str,
     num_classes: int, color_mode: str = "RGB", pretrained: bool = False,
-    run_test_evaluation: bool = False,
+    run_test_evaluation: bool = False, canonical_mapping: dict = None,
+    federation_job_architecture: str = None,
+    canonical_base_model_id: str = None,
+    canonical_base_model_version: int = None,
+    canonical_base_model_checksum: str = None,
 ) -> TrainingConfig:
     input_size = get_architecture_info(recommendation.architecture).default_input_size
     model_config = ModelConfig(
@@ -37,4 +41,9 @@ def to_training_config(
         device=recommendation.device, precision=recommendation.precision,
         epochs=recommendation.epochs, batch_size=recommendation.batch_size,
         num_workers=recommendation.num_workers, run_test_evaluation=run_test_evaluation,
+        canonical_class_mapping=canonical_mapping,
+        federation_job_architecture=federation_job_architecture,
+        canonical_base_model_id=canonical_base_model_id,
+        canonical_base_model_version=canonical_base_model_version,
+        canonical_base_model_checksum=canonical_base_model_checksum,
     )

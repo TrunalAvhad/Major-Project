@@ -26,6 +26,7 @@ import { HospitalRegisterView } from './views/HospitalRegisterView';
 import { DashboardView } from './views/DashboardView';
 import { HospitalsView } from './views/HospitalsView';
 import { FederatedTrainingView } from './views/FederatedTrainingView';
+import { ResearcherTrainingView } from './views/ResearcherTrainingView';
 import { ModelsView } from './views/ModelsView';
 import { ExperimentsView } from './views/ExperimentsView';
 import { MonitoringView } from './views/MonitoringView';
@@ -39,6 +40,7 @@ import { ProfileView } from './views/ProfileView';
 import { StatesDemoView } from './views/StatesDemoView';
 import { AdminApprovalView } from './views/AdminApprovalView';
 import { AdminDiseaseModelsView } from './views/AdminDiseaseModelsView';
+import { AdminFederationModelsView } from './views/AdminFederationModelsView';
 
 // Hospital Operator Views
 import HospitalDashboardView from './views/HospitalDashboardView';
@@ -51,6 +53,7 @@ import HospitalModelsView from './views/HospitalModelsView';
 import HospitalInferenceView from './views/HospitalInferenceView';
 import HospitalCommunicationView from './views/HospitalCommunicationView';
 import HospitalSettingsView from './views/HospitalSettingsView';
+import HospitalFederationView from './views/HospitalFederationView';
 
 const MainLayout = () => {
   const { activeScreen, authStatus, userRole } = useApp();
@@ -105,6 +108,8 @@ const MainLayout = () => {
           return <HospitalTrainingMonitorView />;
         case 'training_results':
           return <HospitalTrainingResultView />;
+        case 'federation_status':
+          return <HospitalFederationView />;
         case 'models':
           return <HospitalModelsView />;
         case 'inference':
@@ -140,6 +145,7 @@ const MainLayout = () => {
         case 'disease-models': return <AdminDiseaseModelsView />;
         case 'hospitals': return <HospitalsView />;
         case 'training': return <FederatedTrainingView />;
+        case 'federation-models': return <AdminFederationModelsView />;
         case 'models': return <ModelsView />;
         case 'audit': return <AuditLogsView />;
         case 'users': return <UserManagementView />;
@@ -172,7 +178,7 @@ const MainLayout = () => {
     switch (activeScreen) {
       case 'dashboard': return <DashboardView />;
       case 'hospitals': return <HospitalsView />;
-      case 'training': return <FederatedTrainingView />;
+      case 'training': return <ResearcherTrainingView />;
       case 'models': return <ModelsView />;
       case 'experiments': return <ExperimentsView />;
       case 'monitoring': return <MonitoringView />;

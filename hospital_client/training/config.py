@@ -11,7 +11,7 @@ expected to just populate these same fields before handing this object (or
 an equivalent one) to Module 7.
 """
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Dict
 
 from hospital_client.model_management.config import ModelConfig, validate_model_config
 
@@ -85,6 +85,21 @@ class TrainingConfig:
 
     # Validation cadence (in epochs)
     validate_every: int = 1
+    
+    # Federation Job specific canonical class mapping
+    canonical_class_mapping: Optional[Dict[str, int]] = None
+
+    # Federation architecture invariant check
+    federation_job_architecture: Optional[str] = None
+
+    # Canonical base model provenance — prescribed by the FederationRound.
+    # When set, M7 must load this exact model from the local store as the
+    # starting point for training, verify its checksum, and report these
+    # values (not the local checkpoint ID) as base_model_* in the handoff.
+    # None means no round-prescribed base model (e.g. standalone training).
+    canonical_base_model_id: Optional[str] = None
+    canonical_base_model_version: Optional[int] = None
+    canonical_base_model_checksum: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -119,6 +134,11 @@ class TrainingConfig:
             "random_seed": self.random_seed,
             "resume": self.resume,
             "validate_every": self.validate_every,
+            "canonical_class_mapping": self.canonical_class_mapping,
+            "federation_job_architecture": self.federation_job_architecture,
+            "canonical_base_model_id": self.canonical_base_model_id,
+            "canonical_base_model_version": self.canonical_base_model_version,
+            "canonical_base_model_checksum": self.canonical_base_model_checksum,
         }
 
 
@@ -128,6 +148,9 @@ def validate_training_config(config: TrainingConfig) -> None:
     silently corrects a value or substitutes a default for an invalid one.
     """
     validate_model_config(config.model_config)  # reuse Module 6's validation, don't duplicate it
+
+    if config.federation_job_architecture and config.federation_job_architecture != config.model_config.architecture:
+        raise ValueError(f"Federation architecture mismatch: job requires {config.federation_job_architecture} but TrainingConfig specifies {config.model_config.architecture}.")
 
     if not config.model_id or not isinstance(config.model_id, str):
         raise ValueError(f"model_id must be a non-empty string, got {config.model_id!r}")

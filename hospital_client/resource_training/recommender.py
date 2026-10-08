@@ -45,6 +45,7 @@ _MORE_EPOCHS_LABELS = ("More Epochs / More Time", "More Epochs / Not Recommended
 @dataclass
 class RecommendedConfig:
     recommendation_type: str
+    recommendation_tier: str
     label: str
     architecture: str
     display_name: str
@@ -70,6 +71,7 @@ class RecommendedConfig:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "recommendation_type": self.recommendation_type,
+            "recommendation_tier": self.recommendation_tier,
             "label": self.label,
             "model": self.architecture,
             "display_name": self.display_name,
@@ -204,10 +206,10 @@ def _resource_summary(a: ModelAssessment) -> str:
     )
 
 
-def _config_from_assessment(recommendation_type: str, a: ModelAssessment, reason: str, tradeoff: str, label: Optional[str] = None) -> RecommendedConfig:
+def _config_from_assessment(recommendation_type: str, recommendation_tier: str, a: ModelAssessment, reason: str, tradeoff: str, label: Optional[str] = None) -> RecommendedConfig:
     t = a.time_estimate or {}
     return RecommendedConfig(
-        recommendation_type=recommendation_type, label=label or _LABELS[recommendation_type],
+        recommendation_type=recommendation_type, recommendation_tier=recommendation_tier, label=label or _LABELS[recommendation_type],
         architecture=a.architecture, display_name=a.display_name, device=a.device, precision=a.precision,
         batch_size=a.batch_size, epochs=a.epochs, num_workers=a.num_workers,
         estimated_training_time_seconds=t.get("estimated_training_time_seconds", 0.0),
@@ -454,7 +456,7 @@ def select_recommendations(
         notes.append("No heavier alternative exists: no larger architecture fits and Recommended is already at the maximum epochs.")
 
     recommendations = [
-        _config_from_assessment(RECOMMENDED, rec, _recommended_reason(rec, bool(comfortable), budget), _recommended_tradeoff(rec)),
+        _config_from_assessment(RECOMMENDED, "RECOMMENDED", rec, _recommended_reason(rec, bool(comfortable), budget), _recommended_tradeoff(rec)),
     ]
     high_not_recommended = False
     if high is not None:
@@ -464,20 +466,22 @@ def select_recommendations(
         reason = _high_reason(high, rec, high_variant, high_not_recommended and not too_little_data, budget)
         if too_little_data:
             reason += f" It is not recommended as the default: {_data_phrase(high, policy, num_train_samples)}."
+        high_tier = "NOT_RECOMMENDED" if high_not_recommended else "HIGH_CAPACITY"
         recommendations.append(_config_from_assessment(
-            HIGH_CAPACITY, high, reason, _high_tradeoff(high_variant), label=label,
+            HIGH_CAPACITY, high_tier, high, reason, _high_tradeoff(high_variant), label=label,
         ))
     if fast is not None:
         recommendations.append(_config_from_assessment(
-            FAST, fast, _fast_reason(fast, rec, fast_variant), _fast_tradeoff(fast_variant), label=_FEWER_EPOCHS_LABEL if fast_variant else None,
+            FAST, "FAST", fast, _fast_reason(fast, rec, fast_variant), _fast_tradeoff(fast_variant), label=_FEWER_EPOCHS_LABEL if fast_variant else None,
         ))
 
     # Per-architecture labels. Epoch variants reuse the Recommended architecture, which keeps its own label.
-    picked = {rec.architecture: (RECOMMENDED, "Recommended")}
+    picked = {rec.architecture: (RECOMMENDED, "Recommended", "RECOMMENDED")}
     if high is not None and not high_variant:
-        picked[high.architecture] = (HIGH_CAPACITY, "Not Recommended" if high_not_recommended else "High-Capacity")
+        high_tier = "NOT_RECOMMENDED" if high_not_recommended else "HIGH_CAPACITY"
+        picked[high.architecture] = (HIGH_CAPACITY, "Not Recommended" if high_not_recommended else "High-Capacity", high_tier)
     if fast is not None and not fast_variant:
-        picked[fast.architecture] = (FAST, "Fast")
+        picked[fast.architecture] = (FAST, "Fast", "FAST")
 
     # Same-tier alternatives: for each primary architecture pick, the fastest other feasible
     # model of the same tier (epoch variants have no alternative - they are not a model choice).
@@ -492,18 +496,24 @@ def select_recommendations(
         alt = min(same_tier, key=_seconds)
         not_recommended = (not _is_comfortable(alt, policy) or not enough_data(alt)
                            or (rtype == HIGH_CAPACITY and _seconds(alt) > budget_seconds))
-        alternatives.append(_alternative_config(rtype, alt, pick, not_recommended, policy, budget, num_train_samples))
-        picked[alt.architecture] = (f"{rtype}_alternative", "Not Recommended" if not_recommended else "Alternative")
+        if rtype == RECOMMENDED:
+            alt_tier = "RECOMMENDED_ALTERNATIVE"
+        elif rtype == FAST:
+            alt_tier = "FAST_ALTERNATIVE"
+        else:
+            alt_tier = "NOT_RECOMMENDED_ALTERNATIVE" if not_recommended else "HIGH_CAPACITY_ALTERNATIVE"
+        alternatives.append(_alternative_config(rtype, alt_tier, alt, pick, not_recommended, policy, budget, num_train_samples))
+        picked[alt.architecture] = (f"{rtype}_alternative", "Not Recommended" if not_recommended else "Alternative", alt_tier)
     for arch, assessment in assessments.items():
         if arch in picked:
-            assessment.role, assessment.status_label = picked[arch]
+            assessment.role, assessment.status_label, assessment.recommendation_tier = picked[arch]
         else:
             _label_unpicked(assessment, policy, budget, num_train_samples)
 
     return RecommendationSet(recommendations, assessments, notes, alternatives)
 
 
-def _alternative_config(rtype: str, alt: ModelAssessment, pick: ModelAssessment, not_recommended: bool,
+def _alternative_config(rtype: str, alt_tier: str, alt: ModelAssessment, pick: ModelAssessment, not_recommended: bool,
                         policy: ResourcePolicy, budget: str, num_train_samples: Optional[int]) -> RecommendedConfig:
     base = _NOT_RECOMMENDED_LABEL if rtype == HIGH_CAPACITY and not_recommended else _LABELS[rtype]
     reason = (
@@ -518,7 +528,7 @@ def _alternative_config(rtype: str, alt: ModelAssessment, pick: ModelAssessment,
         "Same resource tier with a different architecture; which of the two performs better on this dataset "
         "is not known in advance and must be measured."
     )
-    return _config_from_assessment(rtype, alt, reason, tradeoff, label=f"{base} - Alternative")
+    return _config_from_assessment(rtype, alt_tier, alt, reason, tradeoff, label=f"{base} - Alternative")
 
 
 def manual_config(recommendation_set: RecommendationSet, architecture: str, policy: ResourcePolicy,
@@ -546,7 +556,7 @@ def manual_config(recommendation_set: RecommendationSet, architecture: str, poli
     base = _with_epochs(a, chosen_epochs, policy) if chosen_epochs != a.epochs else a
     if batch_size is None and epochs is None:  # e.g. a same-tier alternative: Module 8's own settings
         return _config_from_assessment(
-            MANUAL, a, f"Operator-selected model {a.display_name} with Module 8's settings for it on this machine.",
+            MANUAL, "MANUAL", a, f"Operator-selected model {a.display_name} with Module 8's settings for it on this machine.",
             "Chosen by the operator; performance must be measured on the target dataset.",
             label="Selected Model (Module 8 settings)",
         )
@@ -555,7 +565,7 @@ def manual_config(recommendation_set: RecommendationSet, architecture: str, poli
         reason += (f" The time estimate assumes Module 8's batch size ({a.batch_size}); a smaller batch usually "
                    f"takes longer per epoch.")
     config = _config_from_assessment(
-        MANUAL, base, reason,
+        MANUAL, "MANUAL", base, reason,
         "Chosen by the operator; not one of Module 8's three recommendations. Performance must be measured on the target dataset.",
         label="Manual Configuration",
     )

@@ -89,10 +89,14 @@ def build_dataloaders(config: TrainingConfig) -> PreparedData:
     if train_manifest["total_records"] == 0 or not train_manifest["records"]:
         raise ValueError(f"Training manifest at {train_path} contains zero records.")
 
-    class_mapping = derive_class_mapping(train_manifest)
+    if config.canonical_class_mapping is not None:
+        class_mapping = config.canonical_class_mapping
+    else:
+        class_mapping = derive_class_mapping(train_manifest)
+        
     if len(class_mapping) != config.model_config.num_classes:
         raise ValueError(
-            f"Class-count mismatch: training manifest has {len(class_mapping)} class(es) "
+            f"Class-count mismatch: class mapping has {len(class_mapping)} class(es) "
             f"{sorted(class_mapping.keys())}, but model_config.num_classes="
             f"{config.model_config.num_classes}. Module 7 does not silently resize the "
             "classifier head or drop classes to force agreement."
