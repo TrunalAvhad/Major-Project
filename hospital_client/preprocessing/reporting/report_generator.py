@@ -15,6 +15,7 @@ class ReportGenerator:
         config: PreprocessingConfig,
         splits_map: Dict[str, List[Any]],
         split_validation: Optional[Dict[str, Any]] = None,
+        label_source: Optional[Dict[str, Any]] = None,
     ):
         report_data = {
             "generated_at": datetime.utcnow().isoformat(),
@@ -30,6 +31,10 @@ class ReportGenerator:
             # splitting/split_validation.py). Contains only counts, class
             # names, relative paths, and status - no raw medical data.
             report_data["split_validation"] = split_validation
+        if label_source is not None:
+            # Image labels from a metadata CSV: columns, label map, match counts and
+            # per-split class counts. Counts only - no ids, paths or CSV rows.
+            report_data["label_source"] = label_source
 
         # Verify reconciliation
         accepted = len(splits_map.get("train", [])) + len(splits_map.get("validation", [])) + len(splits_map.get("test", []))
@@ -72,4 +77,13 @@ class ReportGenerator:
                     f.write(f"- **Class distribution warnings**: {split_validation['class_distribution_warnings']}\n")
                 if split_validation['reasons']:
                     f.write(f"- **Reasons**: {split_validation['reasons']}\n")
+            if label_source is not None:
+                f.write(f"\n## Labels From Metadata CSV\n")
+                f.write(f"- **CSV**: {label_source['csv_file']} (image `{label_source['image_column']}`, "
+                        f"label `{label_source['label_column']}`, group `{label_source['group_column']}`)\n")
+                f.write(f"- **Label map**: {label_source['label_map']}\n")
+                f.write(f"- **Grouped (lesion/patient-level) split**: {label_source['grouped_split']}\n")
+                f.write(f"- **Match summary**: {label_source['summary']}\n")
+                for split_name, counts in label_source["class_distribution_per_split"].items():
+                    f.write(f"- **{split_name} classes**: {counts}\n")
 

@@ -203,7 +203,7 @@ def validate_image_split(
     # caller explicitly supplies a real group-id mapping; a fabricated group
     # array (e.g. np.arange(...)) must never be used to claim this was
     # checked.
-    group_map = load_group_id_map(getattr(config, "group_id_map_path", None))
+    group_map = getattr(config, "group_id_map", None) or load_group_id_map(getattr(config, "group_id_map_path", None))
     if group_map is None:
         result.group_leakage = {
             "checked": False,

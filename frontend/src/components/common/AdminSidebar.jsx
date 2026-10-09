@@ -1,5 +1,6 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import { useUiStore } from '../../stores/uiStore';
+import { useAuthStore, useCurrentUser } from '../../stores/authStore';
 import {
   LayoutDashboard,
   ShieldAlert,
@@ -16,12 +17,9 @@ import {
 } from 'lucide-react';
 
 export const AdminSidebar = () => {
-  const {
-    activeScreen,
-    setActiveScreen,
-    currentUser,
-    logout
-  } = useApp();
+  const { activeScreen, setActiveScreen } = useUiStore();
+  const logout = useAuthStore((s) => s.logout);
+  const currentUser = useCurrentUser();
 
   const navItems = [
     { id: 'dashboard', label: 'Admin Overview', icon: LayoutDashboard },
@@ -76,7 +74,7 @@ export const AdminSidebar = () => {
             </div>
           </div>
 
-          {/* Zero-Raw-Data Strict Mode Indicator */}
+          {/* Data-locality indicator */}
           <div style={{
             background: 'rgba(16, 185, 129, 0.08)',
             border: '1px solid var(--status-healthy-border)',
@@ -88,7 +86,7 @@ export const AdminSidebar = () => {
           }}>
             <span className="pulse-dot healthy" />
             <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--status-healthy)', letterSpacing: '0.02em' }}>
-              Zero-Raw-Data: ENFORCED
+              Raw data stays at hospitals
             </span>
           </div>
 
@@ -179,14 +177,14 @@ export const AdminSidebar = () => {
             border: '1px solid rgba(139, 92, 246, 0.4)',
             overflow: 'hidden'
           }}>
-            <span style={{ fontWeight: '600', fontSize: '11px', color: '#ffffff' }}>AD</span>
+            <span style={{ fontWeight: '600', fontSize: '11px', color: '#ffffff' }}>{currentUser.initials}</span>
           </div>
           <div style={{ overflow: 'hidden' }}>
             <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-primary)', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
-              {currentUser?.name || 'Consortium Root Admin'}
+              {currentUser.name}
             </div>
             <div style={{ fontSize: '10px', color: '#c084fc', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
-              Root Security Council
+              {currentUser.roleTag}
             </div>
           </div>
         </div>

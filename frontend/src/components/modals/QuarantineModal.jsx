@@ -1,9 +1,10 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import MockBanner from '../common/MockBanner';
+import { useUiStore } from '../../stores/uiStore';
 import { ShieldAlert, X, CheckCircle, Ban } from 'lucide-react';
 
 export const QuarantineModal = () => {
-  const { activeModal, setActiveModal } = useApp();
+  const { activeModal, setActiveModal } = useUiStore();
 
   if (activeModal !== 'quarantine') return null;
 
@@ -24,6 +25,7 @@ export const QuarantineModal = () => {
         </div>
 
         <div className="modal-body">
+          <div style={{ marginBottom: '12px' }}><MockBanner module="Byzantine detection (Module 12)" /></div>
           <div style={{
             background: 'rgba(239, 68, 68, 0.08)',
             border: '1px solid var(--status-danger-border)',

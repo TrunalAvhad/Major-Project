@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 
 from hospital_client.resource_training.dataset_characteristics import inspect_dataset
@@ -52,6 +53,9 @@ def main():
     train_parser.add_argument("--canonical-base-model-id", default=None, help="Round-prescribed base model ID")
     train_parser.add_argument("--canonical-base-model-version", type=int, default=None, help="Round-prescribed base model version")
     train_parser.add_argument("--canonical-base-model-checksum", default=None, help="Round-prescribed base model checksum")
+    train_parser.add_argument("--architecture-subdir", action="store_true",
+                              help="Write this run's outputs under <output>/<chosen architecture>/ (the throughput "
+                                   "history stays in <output>, shared by all architectures)")
 
     args = parser.parse_args()
 
@@ -94,10 +98,14 @@ def main():
             canonical_mapping = None
             if args.canonical_mapping:
                 canonical_mapping = json.loads(args.canonical_mapping)
+            # The architecture is only final here (--choice is re-resolved above), so the
+            # per-architecture folder is picked here rather than by the caller.
+            run_dir = os.path.join(args.output_dir, chosen.architecture) if args.architecture_subdir else args.output_dir
+            os.makedirs(run_dir, exist_ok=True)
 
             training_config = to_training_config(
                 chosen, model_id=args.model_id, dataset_dir=args.dataset_dir,
-                output_dir=args.output_dir, num_classes=dataset.num_classes,
+                output_dir=run_dir, num_classes=dataset.num_classes,
                 run_test_evaluation=args.run_test_evaluation,
                 canonical_mapping=canonical_mapping,
                 federation_job_architecture=args.federation_job_architecture,
@@ -116,20 +124,20 @@ def main():
             print(f"Actual training duration: {result.training_duration_seconds / 60.0:.2f} minutes "
                   f"(estimated range was: {chosen.estimated_training_time_display})")
 
-            result_path = f"{args.output_dir}/{args.model_id}_training_result.json"
+            result_path = f"{run_dir}/{args.model_id}_training_result.json"
             with open(result_path, "w") as f:
                 json.dump(result.to_dict(), f, indent=2)
-            stats_path = f"{args.output_dir}/{args.model_id}_resource_statistics.json"
+            stats_path = f"{run_dir}/{args.model_id}_resource_statistics.json"
             with open(stats_path, "w") as f:
                 json.dump(stats.to_dict(), f, indent=2)
             print(f"Training result written to: {result_path}")
             print(f"Resource statistics written to: {stats_path}")
             if args.plots:
-                print(f"Evaluation plots written to: {args.output_dir}/{args.model_id}_plots"
+                print(f"Evaluation plots written to: {run_dir}/{args.model_id}_plots"
                       if result.test_metrics is not None else "No plots written: no test evaluation was produced.")
 
             if handoff is not None:
-                handoff_dir = f"{args.output_dir}/{args.model_id}_federation_handoff"
+                handoff_dir = f"{run_dir}/{args.model_id}_federation_handoff"
                 handoff.save(handoff_dir)
                 print(f"Module 7 -> Module 9 FederationHandoff written to: {handoff_dir}")
 

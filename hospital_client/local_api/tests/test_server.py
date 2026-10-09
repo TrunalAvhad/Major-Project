@@ -18,11 +18,11 @@ HOSPITAL_USER = {"user_id": "USR_1", "role": "hospital_operator", "hospital_id":
 def api(tmp_path, monkeypatch):
     work = tmp_path / "work"
     monkeypatch.setattr(server, "WORK_DIR", str(work))
-    monkeypatch.setattr(server, "DATASETS_DIR", str(work / "datasets"))
-    monkeypatch.setattr(server, "TRAINED_DIR", str(work / "trained"))
-    monkeypatch.setattr(server, "TMP_DIR", str(work / "tmp"))
     monkeypatch.setattr(server, "ORIGINS", {ORIGIN})
-    tokens = {"good": HOSPITAL_USER, "researcher": {"user_id": "USR_2", "role": "researcher"}}
+    tokens = {"good": HOSPITAL_USER, "researcher": {"user_id": "USR_2", "role": "researcher"},
+              "other": {"user_id": "USR_3", "role": "hospital_operator", "hospital_id": "HOSP_2"},
+              "no_hospital": {"user_id": "USR_4", "role": "hospital_operator", "hospital_id": None},
+              "traversal": {"user_id": "USR_5", "role": "hospital_operator", "hospital_id": "../HOSP_1"}}
 
     def fake_verify(token):
         if token not in tokens:
@@ -187,9 +187,77 @@ def test_predict_validates_input_and_removes_the_temp_copy(api, tmp_path):
     assert call(f"{api}/predict?model_id=m1&ext=.png", "POST", raw=b"x", ctype="application/octet-stream")[0] == 400
     assert call(f"{api}/predict?model_id=m1&version=1&ext=.exe", "POST", raw=b"x", ctype="application/octet-stream")[0] == 400
     assert call(base, "POST", raw=b"x", ctype="application/json")[0] == 415
+    assert call(base, "POST", raw=b"x", ctype="application/octet-stream")[0] == 404  # not this hospital's model
+    (tmp_path / "work" / "HOSP_1" / "trained" / "resnet18" / "models" / "m1").mkdir(parents=True)  # no version 1
     status, _, body = call(base, "POST", raw=b"not really a png", ctype="application/octet-stream")
-    assert status in (200, 400)  # no such model: the CLI reports a failure
-    assert list((tmp_path / "work" / "tmp").iterdir()) == []
+    assert status in (200, 400)  # the CLI reports the failure
+    assert list((tmp_path / "work" / "HOSP_1" / "tmp").iterdir()) == []
+
+
+def fake_run(work, hospital_id, architecture, model_id):
+    """Result files exactly where Module 8 --architecture-subdir puts them."""
+    d = work / hospital_id / "trained" / architecture
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{model_id}_training_result.json").write_text(json.dumps(
+        {"architecture": architecture, "status": "TRAINING_COMPLETED", "generated_at": "2026-10-08T12:00:00"}))
+    (d / f"{model_id}_run.json").write_text(json.dumps({"dataset_name": "cells", "choice": "recommended"}))
+    return d
+
+
+def test_each_hospital_sees_only_its_own_training_runs(api, tmp_path):
+    work = tmp_path / "work"
+    fake_run(work, "HOSP_1", "resnet18", "cells_resnet18_1")
+    fake_run(work, "HOSP_1", "mobilenet_v3_small", "cells_mnv3_2")
+    fake_run(work, "HOSP_2", "resnet18", "other_resnet18_3")
+
+    mine = {r["model_id"]: r for r in call(f"{api}/training-runs")[2]["runs"]}
+    assert set(mine) == {"cells_resnet18_1", "cells_mnv3_2"}          # both architecture folders
+    assert mine["cells_mnv3_2"]["dataset_name"] == "cells"              # run.json next to its results
+    assert [r["model_id"] for r in call(f"{api}/training-runs", token="other")[2]["runs"]] == ["other_resnet18_3"]
+
+    assert call(f"{api}/training-runs/cells_resnet18_1")[0] == 200
+    assert call(f"{api}/training-runs/cells_resnet18_1", token="other")[0] == 404
+    assert call(f"{api}/training-runs/other_resnet18_3")[0] == 404
+    assert call(f"{api}/datasets", token="other")[2] == {"datasets": []}
+
+
+def test_workspace_needs_a_valid_hospital_id(api, tmp_path):
+    for token in ("no_hospital", "traversal"):
+        status, _, body = call(f"{api}/training-runs", token=token)
+        assert status == 403 and "hospital id" in body["error"]
+    assert not (tmp_path / "HOSP_1").exists()  # nothing created outside WORK_DIR
+
+
+def test_workspace_folder_cannot_be_shared_by_ids_differing_only_in_case(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "WORK_DIR", str(tmp_path))
+    server.Workspace("HOSP_1")
+    (tmp_path / "hosp_1").mkdir(exist_ok=True)          # what a case-insensitive filesystem would give
+    (tmp_path / "hosp_1" / server.OWNER_FILE).write_text("HOSP_1")
+    with pytest.raises(server.ApiError) as e:
+        server.Workspace("hosp_1")
+    assert e.value.status == 403
+
+
+def test_jobs_are_visible_only_to_the_hospital_that_started_them(api, tmp_path):
+    src = make_images(tmp_path / "src", per_class=3)
+    status, _, job = call(f"{api}/datasets/inspect", "POST", {"path": str(src)})
+    assert status == 202
+    assert call(f"{api}/jobs/{job['job_id']}", token="other")[0] == 404
+    assert call(f"{api}/jobs/{job['job_id']}/cancel", "POST", token="other")[0] == 404
+    job = wait_job(api, job)
+    assert job["status"] == "succeeded"
+    assert (tmp_path / "work" / "HOSP_1" / "datasets" / job["result"]["dataset_id"] / "m4").is_dir()
+
+
+def test_run_metadata_is_written_next_to_the_results(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "WORK_DIR", str(tmp_path))
+    ws = server.Workspace("HOSP_1")
+    write = server._run_meta_writer(ws, "m_1", {"dataset_name": "cells"})
+    write(None)  # Module 8 wrote nothing (e.g. it failed before training): nothing to annotate
+    assert ws.arch_dirs() == []
+    d = fake_run(tmp_path, "HOSP_1", "resnet18", "m_1")
+    write(None)
+    assert json.loads((d / "m_1_run.json").read_text()) == {"dataset_name": "cells"}
 
 
 def test_training_run_endpoints_reject_unknown_ids(api):
@@ -221,3 +289,152 @@ def test_runs_are_named_after_the_recommended_model(tmp_path):
     assert server._choice_architecture(str(tmp_path), "fast") is None          # unsafe value ignored
     assert server._choice_architecture(str(tmp_path), "high_capacity") is None  # caller falls back to the choice
     assert server._choice_architecture(str(tmp_path / "missing"), "recommended") is None
+
+
+def test_retry_submits_the_handoff_to_the_round_saved_with_the_run(api, tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    d = fake_run(work, "HOSP_1", "resnet18", "FED_JOB1_1")
+    (d / "FED_JOB1_1_federation_handoff").mkdir()
+    (d / "FED_JOB1_1_run.json").write_text(json.dumps({"job_id": "JOB1", "round_id": "ROUND1"}))
+    fake_run(work, "HOSP_1", "resnet18", "FED_OLD_2")                 # started before round ids were saved
+
+    sent = []
+
+    class Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b'{"success": true, "update": {"status": "ACCEPTED"}}'
+
+    real_urlopen = urllib.request.urlopen
+
+    def fake_urlopen(req, timeout=None):
+        if not req.full_url.startswith(server.BACKEND_URL):            # the test's own calls to the local API
+            return real_urlopen(req, timeout=timeout)
+        sent.append((req.full_url, json.loads(req.data), req.headers["Authorization"]))
+        return Resp()
+
+    monkeypatch.setattr(server.urllib.request, "urlopen", fake_urlopen)
+    status, _, body = call(f"{api}/federation/submit/FED_JOB1_1", method="POST", body={})
+    assert status == 200 and body["update"]["status"] == "ACCEPTED"
+    url, payload, auth = sent[0]
+    assert url.endswith("/federation/jobs/JOB1/rounds/ROUND1/submit")
+    assert payload["handoff_dir"] == str(d / "FED_JOB1_1_federation_handoff")
+    assert auth == "Bearer good"                                       # the caller's own token
+
+    assert call(f"{api}/federation/submit/FED_OLD_2", method="POST", body={})[0] == 409
+    assert call(f"{api}/federation/submit/FED_JOB1_1", method="POST", body={}, token="other")[0] == 409
+    assert len(sent) == 1
+
+
+def test_round_base_model_is_downloaded_once_into_the_hospital_model_store(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    ws = SimpleNamespace(trained=str(tmp_path / "trained"), tmp=str(tmp_path / "tmp"))
+    rnd = {"round_id": "JOB1_R1", "base_model_id": "SEED_JOB1", "base_model_version": 1}
+    fetched = []
+
+    class Resp:
+        def __init__(self, data): self.data = data
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, n=-1):
+            data, self.data = self.data, b""
+            return data
+
+    def fake_urlopen(req, timeout=None):
+        fetched.append((req.full_url, req.headers["Authorization"]))
+        return Resp(req.full_url.rsplit("/", 1)[1].encode())
+
+    monkeypatch.setattr(server.urllib.request, "urlopen", fake_urlopen)
+    server._ensure_base_model(ws, "resnet18", rnd, "tok")
+    dest = tmp_path / "trained" / "resnet18" / "models" / "SEED_JOB1" / "v1"
+    assert (dest / "model.safetensors").read_bytes() == b"model.safetensors"
+    assert (dest / "metadata.json").read_bytes() == b"metadata.json"
+    assert fetched == [(f"{server.BACKEND_URL}/federation/rounds/JOB1_R1/base-model/{f}", "Bearer tok")
+                       for f in ("model.safetensors", "metadata.json")]
+
+    server._ensure_base_model(ws, "resnet18", rnd, "tok")             # already present: no second download
+    assert len(fetched) == 2
+
+    with pytest.raises(server.ApiError) as e:
+        server._ensure_base_model(ws, "resnet18", {**rnd, "base_model_id": "../escape"}, "tok")
+    assert e.value.status == 400
+
+    def refused(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(server.urllib.request, "urlopen", refused)
+    with pytest.raises(server.ApiError) as e:
+        server._ensure_base_model(ws, "resnet18", {**rnd, "base_model_id": "OTHER"}, "tok")
+    assert e.value.status == 502
+    assert not (tmp_path / "trained" / "resnet18" / "models" / "OTHER").exists()   # nothing half-written
+
+
+@pytest.mark.parametrize("test_count, evaluated", [(5, True), (0, False)])
+def test_federated_run_evaluates_the_test_split_when_there_is_one(api, tmp_path, monkeypatch, test_count, evaluated):
+    import hospital_client.federation.manifest_filter as mf
+    started = []
+    monkeypatch.setattr(server, "_require_preprocessed", lambda ws, dataset_id: str(tmp_path))
+    monkeypatch.setattr(mf, "create_job_manifests", lambda **kw: (str(tmp_path), {"train": 10, "val": 5, "test": test_count}))
+    monkeypatch.setattr(server, "dataset_dir", lambda ws, dataset_id: str(tmp_path))
+    (tmp_path / "source.json").write_text(json.dumps({"name": "cells"}))
+
+    class Handle:
+        def to_dict(self): return {"job_id": "abc", "status": "running"}
+
+    monkeypatch.setattr(server, "start_job", lambda kind, cmd, *a, **kw: started.append(cmd) or Handle())
+    job = {"federation_job_id": "JOB1", "architecture": "resnet18", "class_mapping": {"a": 0, "b": 1}, "rounds": []}
+    status, _, _ = call(f"{api}/federation/participate", method="POST", body={"job": job, "dataset_id": "0123456789ab"})
+    assert status == 202
+    assert ("--test" in started[0] and "--plots" in started[0]) == evaluated
+
+
+@pytest.mark.parametrize("body, generated", [({}, True), ({"generate_missing_splits": False}, False)])
+def test_preprocess_creates_missing_splits_by_default(api, tmp_path, monkeypatch, body, generated):
+    d = tmp_path / "work" / "HOSP_1" / "datasets" / "0123456789ab"
+    (d / "m4").mkdir(parents=True)
+    (d / "m4" / "dataset_profile.json").write_text("{}")
+    (d / "source.json").write_text(json.dumps({"path": str(tmp_path), "name": "ds"}))
+    started = []
+
+    class Handle:
+        def to_dict(self): return {"job_id": "abc", "status": "running"}
+
+    monkeypatch.setattr(server, "start_job", lambda kind, cmd, *a, **kw: started.append(cmd) or Handle())
+    status, _, _ = call(f"{api}/datasets/0123456789ab/preprocess", method="POST", body=body)
+    assert status == 202
+    assert ("--generate-missing-splits" in started[0]) == generated
+
+
+def test_metadata_csv_columns_and_label_values(api, tmp_path):
+    csv = tmp_path / "meta.csv"
+    csv.write_text("isic_id,diagnosis,lesion_id\nA,MEL,L1\nB,NV,L1\nC,NV,L2\n")
+    status, _, body = call(f"{api}/metadata-csv", method="POST", body={"path": str(csv)})
+    assert status == 200 and body["columns"] == ["isic_id", "diagnosis", "lesion_id"] and "values" not in body
+    status, _, body = call(f"{api}/metadata-csv", method="POST", body={"path": str(csv), "label_column": "diagnosis"})
+    assert body["values"] == [{"value": "NV", "count": 2}, {"value": "MEL", "count": 1}]
+    assert call(f"{api}/metadata-csv", method="POST", body={"path": str(csv), "label_column": "nope"})[0] == 400
+    assert call(f"{api}/metadata-csv", method="POST", body={"path": str(tmp_path / "x.txt")})[0] == 400
+
+
+def test_inspect_passes_the_metadata_label_source_to_module_4(api, tmp_path, monkeypatch):
+    (tmp_path / "images").mkdir()
+    csv = tmp_path / "meta.csv"
+    csv.write_text("isic_id,diagnosis\nA,MEL\n")
+    started = []
+
+    class Handle:
+        def to_dict(self): return {"job_id": "abc", "status": "running"}
+
+    monkeypatch.setattr(server, "start_job", lambda kind, cmd, *a, **kw: started.append(cmd) or Handle())
+    spec = {"csv_path": str(csv), "image_column": "isic_id", "label_column": "diagnosis",
+            "group_column": "", "label_map": {"MEL": "malignant", "NV": None}}
+    status, _, _ = call(f"{api}/datasets/inspect", method="POST", body={"path": str(tmp_path / "images"), "label_source": spec})
+    assert status == 202
+    cmd = started[0]
+    assert cmd[cmd.index("--labels-csv") + 1] == str(csv) and "--group-column" not in cmd
+    assert json.loads(cmd[cmd.index("--label-map") + 1]) == {"MEL": "malignant", "NV": None}
+
+    bad = {**spec, "label_column": ""}
+    assert call(f"{api}/datasets/inspect", method="POST", body={"path": str(tmp_path / "images"), "label_source": bad})[0] == 400
+    assert call(f"{api}/datasets/inspect", method="POST", body={"path": str(csv), "label_source": spec})[0] == 400
+    assert len(started) == 1

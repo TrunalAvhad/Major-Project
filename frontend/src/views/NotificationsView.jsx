@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
+import MockBanner from '../components/common/MockBanner';
+import { useUiStore } from '../stores/uiStore';
 import {
   Bell,
   AlertTriangle,
@@ -16,11 +17,12 @@ import {
 } from 'lucide-react';
 
 export const NotificationsView = () => {
-  const { setActiveModal, setActiveScreen } = useApp();
+  const { setActiveModal, setActiveScreen } = useUiStore();
   const [filterTopic, setFilterTopic] = useState('all');
 
   return (
     <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      <MockBanner module="Notifications (Module 18)" />
       {/* Subheader Navigation */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
@@ -38,7 +40,7 @@ export const NotificationsView = () => {
         </div>
 
         <div style={{ display: 'flex', gap: '8px' }}>
-          <button className="btn btn-secondary" onClick={() => alert('All notifications marked as read.')}>
+          <button className="btn btn-secondary" disabled title="Not implemented yet (mock screen)">
             <Check size={12} />
             <span>Mark all as read</span>
           </button>
@@ -46,7 +48,7 @@ export const NotificationsView = () => {
             <Sliders size={12} />
             <span>Routing Rules</span>
           </button>
-          <button className="btn btn-primary" onClick={() => alert('Audit receipt exported to local keychain.')}>
+          <button className="btn btn-primary" disabled title="Not implemented yet (mock screen)">
             <Download size={12} />
             <span>Export Audit Receipt</span>
           </button>
@@ -217,11 +219,11 @@ export const NotificationsView = () => {
                 <button className="btn btn-primary" style={{ fontSize: '10px' }} onClick={() => setActiveModal('quarantine')}>
                   Inspect Gradient Tensor
                 </button>
-                <button className="btn btn-secondary" style={{ fontSize: '10px' }} onClick={() => alert('Sanitization approved.')}>
+                <button className="btn btn-secondary" style={{ fontSize: '10px' }} disabled title="Not implemented yet (mock screen)">
                   <Check size={11} />
                   <span>Approve Sanitize Action</span>
                 </button>
-                <button className="btn btn-danger" style={{ fontSize: '10px' }} onClick={() => alert('Kyoto node muted for 1 hour.')}>
+                <button className="btn btn-danger" style={{ fontSize: '10px' }} disabled title="Not implemented yet (mock screen)">
                   Mute Node (1h)
                 </button>
               </div>
@@ -254,7 +256,7 @@ export const NotificationsView = () => {
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button className="btn btn-secondary" style={{ fontSize: '10px' }} onClick={() => alert('Opening differential privacy expenditure log...')}>
+                <button className="btn btn-secondary" style={{ fontSize: '10px' }} disabled title="Not implemented yet (mock screen)">
                   Review Differential Privacy Log
                 </button>
                 <button className="btn btn-primary" style={{ fontSize: '10px' }} onClick={() => setActiveModal('exportWeights')}>

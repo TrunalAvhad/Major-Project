@@ -4,6 +4,13 @@ const AuditService = require('../services/auditService');
 const { generateToken, generateUserId, generateAccountId, isValidEmail } = require('../services/authService');
 const { ROLES } = require('../permissions/roles');
 
+/** Display name of a user's hospital, or null for users without one. */
+const hospitalNameOf = async (hospital_id) => {
+  if (!hospital_id) return null;
+  const hospital = await Hospital.findOne({ hospital_id }).select('name');
+  return hospital ? hospital.name : null;
+};
+
 
 const registerUser = async (req, res) => {
   const { name, email, password, role, hospital_id, hospital_name } = req.body;
@@ -270,6 +277,7 @@ const loginUser = async (req, res) => {
           email: user.email,
           role: user.role,
           hospital_id: user.hospital_id,
+          hospital_name: await hospitalNameOf(user.hospital_id),
           status: user.status
         },
         access_token
@@ -301,6 +309,7 @@ const logoutUser = async (req, res) => {
 };
 
 const getMe = async (req, res) => {
+  const hospital_name = await hospitalNameOf(req.user.hospital_id);
   res.status(200).json({
     success: true,
     data: {
@@ -311,6 +320,7 @@ const getMe = async (req, res) => {
         email: req.user.email,
         role: req.user.role,
         hospital_id: req.user.hospital_id,
+        hospital_name,
         status: req.user.status
       }
     }

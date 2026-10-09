@@ -1,5 +1,6 @@
 import os
 import json
+from collections import Counter
 import logging
 from typing import Dict, Any, List, Optional, Tuple
 import pandas as pd
@@ -27,6 +28,8 @@ from hospital_client.preprocessing.tabular.encoding import EncoderFitter
 from hospital_client.preprocessing.output.manifest_builder import ManifestBuilder
 from hospital_client.preprocessing.output.materializer import Materializer
 from hospital_client.preprocessing.reporting.report_generator import ReportGenerator
+from hospital_client.dataset.ingestion.image_ingestor import SUPPORTED_EXTENSIONS
+from hospital_client.dataset.ingestion.metadata_labels import ImageLabelSource, load_image_labels
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +114,9 @@ class PreprocessingEngine:
         # Assuming the profile doesn't list every single file to save space, we scan
         total_estimated_size = 0
         detected_splits = _extract_split_names(profile)
-        
+        # Labels (and lesion/patient groups) from a metadata CSV when Module 4 recorded one.
+        csv_labels, metadata_csv = self._load_metadata_labels(profile, source_path)
+
         rejected_or_review_records = []
         for root, _, files in os.walk(source_path):
             for file in files:
@@ -119,6 +124,8 @@ class PreprocessingEngine:
 
                 full_path = os.path.join(root, file)
                 rel_path = os.path.relpath(full_path, source_path)
+                if metadata_csv and os.path.normcase(os.path.abspath(full_path)) == metadata_csv:
+                    continue  # the label file itself, not a sample
 
                 # Resolve split/label from the path alone (cheap, no file I/O)
                 # for every discovered file - valid or not - so split
@@ -127,6 +134,15 @@ class PreprocessingEngine:
                 split, parent_label, subtype = self.label_resolver.resolve_label(rel_path, detected_splits)
 
                 status, reason, meta = assess_image_quality(full_path, self.config.quality)
+                if csv_labels is not None:
+                    # Folder names do not name classes here; the CSV does. A readable image
+                    # without a usable CSV label is excluded (and counted), never guessed.
+                    parent_label = csv_labels.labels.get(rel_path)
+                    raw_label = csv_labels.raw_labels.get(rel_path)
+                    subtype = raw_label if raw_label != parent_label else None  # e.g. MEL kept under "malignant"
+                    if status == QualityStatus.VALID and parent_label is None:
+                        status = QualityStatus.REJECTED
+                        reason = csv_labels.excluded.get(rel_path, "UNLABELED: image has no row in the metadata CSV")
                 meta = dict(meta)
                 meta["split"] = split
                 self.quarantine.add_sample(full_path, status, reason, meta)
@@ -252,9 +268,41 @@ class PreprocessingEngine:
             self.manifest_builder.build_manifest(split_name, records, meta)
 
         # 6. Report
+        label_report = None
+        if csv_labels is not None:
+            spec = profile["label_source"]
+            label_report = {
+                **{k: spec.get(k) for k in ("image_column", "label_column", "group_column", "label_map")},
+                "csv_file": os.path.basename(spec["csv_path"]),
+                "summary": csv_labels.summary,
+                "grouped_split": self.config.split.strategy == SplitStrategy.GROUPED,
+                "class_distribution_per_split": {
+                    name: dict(Counter(r["label"] for r in recs)) for name, recs in splits_map.items()
+                },
+            }
         self.report_generator.generate_report(
-            self.quarantine.summary(), self.config, splits_map, split_validation=split_validation.to_dict()
+            self.quarantine.summary(), self.config, splits_map, split_validation=split_validation.to_dict(),
+            label_source=label_report,
         )
+
+    def _load_metadata_labels(self, profile: Dict[str, Any], source_path: str):
+        """
+        (ImageLabels, normalized CSV path) when the DatasetProfile says image labels come
+        from a metadata CSV (Module 4 label_source); (None, None) for folder-name labels.
+        A real lesion/patient id column switches the generated split to GROUPED so no
+        lesion/patient spans two splits; an explicit --group-id-map still takes precedence.
+        """
+        spec = profile.get("label_source")
+        if not spec:
+            return None, None
+        source = ImageLabelSource.from_dict(spec)
+        image_files = [os.path.join(root, f) for root, _, files in os.walk(source_path) for f in files
+                       if not f.startswith(".") and os.path.splitext(f)[1].lower() in SUPPORTED_EXTENSIONS]
+        labels = load_image_labels(source, source_path, image_files)
+        if source.group_column and not self.config.split.group_id_map_path:
+            self.config.split.group_id_map = labels.groups
+            self.config.split.strategy = SplitStrategy.GROUPED
+        return labels, os.path.normcase(os.path.abspath(source.csv_path))
 
     def _resolve_real_groups(self, records: List[Dict[str, Any]]) -> Optional[np.ndarray]:
         """
@@ -272,7 +320,7 @@ class PreprocessingEngine:
         if self.config.split.strategy != SplitStrategy.GROUPED:
             return None
 
-        group_map = load_group_id_map(self.config.split.group_id_map_path)
+        group_map = self.config.split.group_id_map or load_group_id_map(self.config.split.group_id_map_path)
         if group_map is None:
             raise ValueError(
                 "Grouped splitting was requested (SplitConfig.strategy=GROUPED) for an image "
@@ -285,7 +333,7 @@ class PreprocessingEngine:
         if missing:
             raise ValueError(
                 f"Grouped splitting requires every sample to have a real group id; "
-                f"{len(missing)} sample(s) are missing from group_id_map_path "
+                f"{len(missing)} sample(s) are missing from group_id_map_path (or the metadata CSV group column) "
                 f"(e.g. {missing[:5]})."
             )
         return np.array([group_map[r["rel_path"]] for r in records])

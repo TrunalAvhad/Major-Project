@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
+import { useAuthStore } from '../stores/authStore';
+import { useUiStore } from '../stores/uiStore';
 import { ShieldAlert, ShieldCheck, KeyRound, Check, AlertCircle, Loader2, ArrowLeft, Lock } from 'lucide-react';
 
 export const AdminLoginView = () => {
-  const { login, setActiveScreen } = useApp();
-  const [email, setEmail] = useState('admin@consortium.org');
-  const [passphrase, setPassphrase] = useState('admin123');
+  const login = useAuthStore((s) => s.login);
+  const setActiveScreen = useUiStore((s) => s.setActiveScreen);
+  const [email, setEmail] = useState('');
+  const [passphrase, setPassphrase] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -18,7 +20,7 @@ export const AdminLoginView = () => {
     try {
       await login(email, passphrase, 'admin', rememberMe);
     } catch (err) {
-      setErrorMessage(err.message || 'Admin authentication failed. Verify root credentials.');
+      setErrorMessage(err.message || 'Admin authentication failed. Check your credentials.');
     } finally {
       setLoading(false);
     }
@@ -48,11 +50,9 @@ export const AdminLoginView = () => {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <ShieldAlert size={14} />
-          <span><strong>CONSORTIUM SECURITY COUNCIL GATEWAY</strong> :: TIER-1 ROOT ORCHESTRATOR</span>
+          <span><strong>CONSORTIUM ADMINISTRATOR SIGN-IN</strong></span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '10px' }} className="font-mono">
-          <span>ATTESTATION: <strong style={{ color: '#4ade80' }}>SGX-ENCLAVE ROOT</strong></span>
-          <span>CONSENSUS: <strong style={{ color: '#c084fc' }}>COUNCIL VALIDATED</strong></span>
         </div>
       </div>
 
@@ -105,7 +105,7 @@ export const AdminLoginView = () => {
                 letterSpacing: '0.05em',
                 textTransform: 'uppercase'
               }}>
-                CONSORTIUM ROOT ADMINISTRATOR AUTHENTICATION
+                CONSORTIUM ADMINISTRATOR
               </span>
             </div>
 
@@ -113,42 +113,6 @@ export const AdminLoginView = () => {
               Sign in with Consortium Administrator credentials to manage researcher approvals, disease models, hospital node enrollments, and audit trails.
             </p>
           </div>
-
-          {/* Quick-Fill Root Credential Pill */}
-          <div style={{
-            background: 'rgba(124, 58, 237, 0.1)',
-            border: '1px solid rgba(139, 92, 246, 0.3)',
-            borderRadius: '6px',
-            padding: '8px 12px',
-            marginBottom: '18px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            fontSize: '11px'
-          }}>
-            <span style={{ color: '#c084fc' }}>Quick-Fill Root Admin:</span>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('admin@consortium.org');
-                setPassphrase('admin123');
-                setErrorMessage(null);
-              }}
-              style={{
-                background: 'rgba(139, 92, 246, 0.25)',
-                border: '1px solid rgba(139, 92, 246, 0.5)',
-                color: '#f5f3ff',
-                borderRadius: '4px',
-                padding: '2px 8px',
-                fontSize: '10px',
-                fontWeight: '600',
-                cursor: 'pointer'
-              }}
-            >
-              admin@consortium.org
-            </button>
-          </div>
-
           {/* Error Message */}
           {errorMessage && (
             <div style={{
@@ -237,9 +201,6 @@ export const AdminLoginView = () => {
                 />
                 <span>Maintain session token</span>
               </label>
-              <span className="font-mono" style={{ color: '#c084fc', fontSize: '10px' }}>
-                RBAC: LEVEL 4 ROOT
-              </span>
             </div>
 
             <button
@@ -266,12 +227,12 @@ export const AdminLoginView = () => {
               {loading ? (
                 <>
                   <Loader2 size={16} className="spin" />
-                  <span>Validating Root Credentials...</span>
+                  <span>Signing in...</span>
                 </>
               ) : (
                 <>
                   <Lock size={15} />
-                  <span>Authorize Consortium Admin Session</span>
+                  <span>Sign in as admin</span>
                 </>
               )}
             </button>

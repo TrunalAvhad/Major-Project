@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { useApp } from '../context/AppContext';
-import { useML } from '../context/MLContext';
-import apiService from '../services/apiService';
+import { useUiStore } from '../stores/uiStore';
+import { useAuthStore, selectHospitalId } from '../stores/authStore';
+import { useMLStore } from '../stores/mlStore';
+import { useRequestsStore } from '../stores/requestsStore';
 import RecommendationCard from '../components/training/RecommendationCard';
 import ManualTrainingPanel from '../components/training/ManualTrainingPanel';
 import TrainingConfirmModal from '../components/training/TrainingConfirmModal';
@@ -12,16 +13,19 @@ import { PlayCircle, RefreshCw, Link2 } from 'lucide-react';
 const gb = (mb) => (mb == null ? '-' : `${(mb / 1024).toFixed(1)} GB`);
 
 const StartTrainingView = () => {
-  const { setActiveTab, hospitalId } = useApp();
+  const setActiveTab = useUiStore((s) => s.setActiveScreen);
+  const hospitalId = useAuthStore(selectHospitalId);
   const {
     activeDataset, hardware, hardwareError, refreshHardware, pipeline, rerunRecommendations,
     selection, setSelection, startTraining, trainingJob, linkedRequestId, setLinkedRequestId
-  } = useML();
+  } = useMLStore();
+  const { requests: requestsResource, loadRequests, participate } = useRequestsStore();
+  const requests = requestsResource.data.filter((r) => ['OPEN', 'ACTIVE'].includes(r.status));
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [launchError, setLaunchError] = useState(null);
-  const [requests, setRequests] = useState([]);
-  const [requestsError, setRequestsError] = useState(null);
+  const [actionError, setActionError] = useState(null);
+  const requestsError = actionError || requestsResource.error;
   const [joining, setJoining] = useState(false);
 
   const recSet = activeDataset?.recommendations;
@@ -33,11 +37,7 @@ const StartTrainingView = () => {
     : { key: rec.recommendation_type, choice: rec.recommendation_type, config: rec });
   const trainingRunning = trainingJob?.status === 'running';
 
-  useEffect(() => {
-    apiService.getAllTrainingRequests()
-      .then((list) => setRequests(list.filter((r) => ['OPEN', 'ACTIVE'].includes(r.status))))
-      .catch((e) => setRequestsError(e.message));
-  }, []);
+  useEffect(() => { loadRequests(); }, [loadRequests]);
 
   const linked = requests.find((r) => r.request_id === linkedRequestId);
   const participation = linked?.participating_hospitals?.find((p) => p.hospital_id === hospitalId);
@@ -46,10 +46,10 @@ const StartTrainingView = () => {
   const handleJoin = async () => {
     setJoining(true);
     try {
-      const { training_request } = await apiService.participateInTrainingRequest(linkedRequestId);
-      setRequests((list) => list.map((r) => (r.request_id === training_request.request_id ? training_request : r)));
+      setActionError(null);
+      await participate(linkedRequestId);
     } catch (e) {
-      setRequestsError(e.message);
+      setActionError(e.message);
     } finally {
       setJoining(false);
     }

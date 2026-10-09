@@ -11,7 +11,17 @@ Every ML action runs the existing module CLI exactly as a terminal user would:
     predict     -> python -m hospital_client.inference predict ... --json      (Module 16)
 
 Long-running steps are background jobs the UI polls. Generated outputs live
-under ML_WORK_DIR (default ~/medfl_ml_work); source datasets are only read.
+under ML_WORK_DIR (default ~/medfl_ml_work), one workspace per hospital
+(see Workspace); source datasets are only read:
+
+    <ML_WORK_DIR>/<hospital_id>/
+        datasets/<dataset_id>/           Module 4/5 outputs + Module 8 recommendations
+        trained/<architecture>/          one folder per model architecture:
+            <model_id>_run.json, _training_result.json, _resource_statistics.json,
+            _plots/, _federation_handoff/, models/ (Module 6 store), state/
+        trained/resource_training_history.json   Module 8 throughput history
+        federation_runs/<job_id>/run_*/  job-filtered manifests (reference local files)
+        tmp/                             inference uploads, deleted per request
 
 Security: binds to 127.0.0.1; only the configured UI origins may call it;
 every route except /health needs a backend-issued JWT for a
@@ -49,9 +59,6 @@ ORIGINS = {
 }
 BACKEND_URL = os.environ.get("ML_BACKEND_URL", "http://localhost:5000/api/v1").rstrip("/")
 WORK_DIR = os.path.abspath(os.environ.get("ML_WORK_DIR", os.path.join(os.path.expanduser("~"), "medfl_ml_work")))
-DATASETS_DIR = os.path.join(WORK_DIR, "datasets")
-TRAINED_DIR = os.path.join(WORK_DIR, "trained")
-TMP_DIR = os.path.join(WORK_DIR, "tmp")
 
 MAX_BODY = 50 * 1024 * 1024
 MAX_JOB_LINES = 5000
@@ -66,6 +73,8 @@ PLOT_FILES = ("confusion_matrix.png", "roc_curves.png", "pr_curves.png")
 DATASET_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,120}$")
 ARCH_RE = re.compile(r"^[a-z0-9_]{1,50}$")
+HOSPITAL_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
+OWNER_FILE = ".hospital_id"
 EPOCH_RE = re.compile(r"^\[epoch (\d+)/(\d+)\] (.*?) elapsed=([\d.]+)s$")
 
 
@@ -130,10 +139,12 @@ def _child_env() -> dict:
 
 
 class Job:
-    def __init__(self, kind: str, cmd: list, finalize, meta=None):
+    def __init__(self, kind: str, cmd: list, finalize, meta=None, owner=None, on_exit=None):
         self.id = uuid.uuid4().hex[:12]
         self.kind, self.cmd, self.finalize = kind, cmd, finalize
         self.meta = meta or {}
+        self.owner = owner      # hospital_id that started it; only it may poll/cancel
+        self.on_exit = on_exit  # runs once the process exits, success or failure, before finalize
         self.status = "running"
         self.lines, self.epochs = [], []
         self.result = self.error = None
@@ -170,6 +181,11 @@ def _run_job(job: Job) -> None:
                     point[key] = float(value)
                 job.epochs.append(point)
         code = job.proc.wait()
+        if job.on_exit is not None:
+            try:
+                job.on_exit(job)
+            except Exception:
+                traceback.print_exc()  # bookkeeping must never hide the real outcome
         if job.cancelled:
             job.status = "cancelled"
             return
@@ -192,9 +208,10 @@ def _failure_message(lines: list, code: int) -> str:
     return f"Process exited with code {code}. See the log for details."
 
 
-def start_job(kind: str, cmd: list, finalize, meta=None) -> Job:
-    job = Job(kind, cmd, finalize, meta)
+def start_job(kind: str, cmd: list, finalize, meta=None, owner=None, on_exit=None) -> Job:
+    job = Job(kind, cmd, finalize, meta, owner, on_exit)
     with _jobs_lock:
+        # Machine-wide on purpose: hospitals sharing one machine also share its GPU.
         if kind == "train" and any(j.kind == "train" and j.status == "running" for j in _jobs.values()):
             raise ApiError(409, "A training run is already in progress on this machine.")
         _jobs[job.id] = job
@@ -205,9 +222,9 @@ def start_job(kind: str, cmd: list, finalize, meta=None) -> Job:
     return job
 
 
-def get_job(job_id: str) -> Job:
+def get_job(job_id: str, owner=None) -> Job:
     job = _jobs.get(job_id)
-    if job is None:
+    if job is None or job.owner != owner:  # another hospital's job looks exactly like a missing one
         raise ApiError(404, "Unknown job.")
     return job
 
@@ -251,17 +268,64 @@ def _read_text(path: str):
         return f.read()
 
 
-def dataset_dir(dataset_id: str) -> str:
+class Workspace:
+    """One hospital's outputs under WORK_DIR/<hospital_id>/ (layout: module docstring).
+
+    Every authenticated route resolves its paths through the signed-in operator's
+    workspace, so on a shared machine a hospital never sees another hospital's
+    datasets, training runs, models or federation manifests."""
+
+    def __init__(self, hospital_id):
+        if not isinstance(hospital_id, str) or not HOSPITAL_ID_RE.match(hospital_id):
+            raise ApiError(403, "Your account has no valid hospital id, so no local ML workspace can be opened for it.")
+        self.hospital_id = hospital_id
+        self.root = os.path.join(WORK_DIR, hospital_id)
+        self.datasets = os.path.join(self.root, "datasets")
+        self.trained = os.path.join(self.root, "trained")
+        self.federation_runs = os.path.join(self.root, "federation_runs")
+        self.tmp = os.path.join(self.root, "tmp")
+        self._claim()
+
+    def _claim(self):
+        # Windows/macOS paths ignore case, so HOSP_1 and hosp_1 would share one folder:
+        # the folder remembers its exact owner and refuses any other id.
+        os.makedirs(self.root, exist_ok=True)
+        marker = os.path.join(self.root, OWNER_FILE)
+        try:
+            with open(marker, "x", encoding="utf-8") as f:
+                f.write(self.hospital_id)
+        except FileExistsError:
+            if _read_text(marker) != self.hospital_id:
+                raise ApiError(403, "This machine's ML workspace folder for your hospital id belongs to a different hospital id.")
+
+    def arch_dirs(self) -> list:
+        if not os.path.isdir(self.trained):
+            return []
+        return [os.path.join(self.trained, a) for a in sorted(os.listdir(self.trained))
+                if ARCH_RE.match(a) and os.path.isdir(os.path.join(self.trained, a))]
+
+    def run_dir(self, model_id: str):
+        """The trained/<architecture> folder holding this run's results, or None."""
+        return next((d for d in self.arch_dirs()
+                     if os.path.isfile(os.path.join(d, f"{model_id}_training_result.json"))), None)
+
+    def models_root(self, model_id: str):
+        """The Module 6 store (trained/<architecture>/models) that has this model, or None."""
+        return next((os.path.join(d, "models") for d in self.arch_dirs()
+                     if os.path.isdir(os.path.join(d, "models", model_id))), None)
+
+
+def dataset_dir(ws: Workspace, dataset_id: str) -> str:
     if not DATASET_ID_RE.match(dataset_id or ""):
         raise ApiError(400, "Invalid dataset id.")
-    d = os.path.join(DATASETS_DIR, dataset_id)
+    d = os.path.join(ws.datasets, dataset_id)
     if not os.path.isfile(os.path.join(d, "source.json")):
         raise ApiError(404, "Unknown dataset. Inspect it first.")
     return d
 
 
-def dataset_summary(dataset_id: str) -> dict:
-    d = dataset_dir(dataset_id)
+def dataset_summary(ws: Workspace, dataset_id: str) -> dict:
+    d = dataset_dir(ws, dataset_id)
     source = _read_json(os.path.join(d, "source.json"))
     return {
         "dataset_id": dataset_id,
@@ -275,21 +339,32 @@ def dataset_summary(dataset_id: str) -> dict:
     }
 
 
-def training_run(model_id: str) -> dict:
+def training_run(ws: Workspace, model_id: str) -> dict:
     if not MODEL_ID_RE.match(model_id or ""):
         raise ApiError(400, "Invalid model id.")
-    result = _read_json(os.path.join(TRAINED_DIR, f"{model_id}_training_result.json"))
-    if result is None:
+    d = ws.run_dir(model_id)
+    if d is None:
         raise ApiError(404, "No training result for this model id.")
-    plots_dir = os.path.join(TRAINED_DIR, f"{model_id}_plots")
+    plots_dir = os.path.join(d, f"{model_id}_plots")
     return {
         "model_id": model_id,
-        "run": _read_json(os.path.join(TRAINED_DIR, f"{model_id}_run.json")),
-        "result": result,
-        "resource_statistics": _read_json(os.path.join(TRAINED_DIR, f"{model_id}_resource_statistics.json")),
+        "run": _read_json(os.path.join(d, f"{model_id}_run.json")),
+        "result": _read_json(os.path.join(d, f"{model_id}_training_result.json")),
+        "resource_statistics": _read_json(os.path.join(d, f"{model_id}_resource_statistics.json")),
         "plots": [p for p in PLOT_FILES if os.path.isfile(os.path.join(plots_dir, p))],
         "curve_metrics": _read_json(os.path.join(plots_dir, "curve_metrics.json")),
     }
+
+
+def _run_meta_writer(ws: Workspace, model_id: str, meta: dict):
+    """Job on_exit hook: Module 8 only fixes the architecture folder once it has picked the
+    model, so the run's metadata is written next to its results after the process exits."""
+    def write(job):
+        d = ws.run_dir(model_id)
+        if d is not None:
+            with open(os.path.join(d, f"{model_id}_run.json"), "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2)
+    return write
 
 
 def _slug(text: str) -> str:
@@ -303,8 +378,8 @@ def r_health(h, m, q):
 
 
 def r_resources(h, m, q):
-    os.makedirs(TRAINED_DIR, exist_ok=True)
-    proc = subprocess.run(_module_cmd("hospital_client.resource_training", "detect", "--output", TRAINED_DIR),
+    os.makedirs(h.ws.trained, exist_ok=True)
+    proc = subprocess.run(_module_cmd("hospital_client.resource_training", "detect", "--output", h.ws.trained),
                           cwd=REPO_ROOT, env=_child_env(), capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=300)
     if proc.returncode != 0:
@@ -330,11 +405,12 @@ def r_browse(h, m, q):
 
 def r_list_datasets(h, m, q):
     out = []
-    if os.path.isdir(DATASETS_DIR):
-        for did in sorted(os.listdir(DATASETS_DIR)):
-            if DATASET_ID_RE.match(did) and os.path.isfile(os.path.join(DATASETS_DIR, did, "source.json")):
-                s = dataset_summary(did)
-                src = _read_json(os.path.join(DATASETS_DIR, did, "source.json")) or {}
+    ws = h.ws
+    if os.path.isdir(ws.datasets):
+        for did in sorted(os.listdir(ws.datasets)):
+            if DATASET_ID_RE.match(did) and os.path.isfile(os.path.join(ws.datasets, did, "source.json")):
+                s = dataset_summary(ws, did)
+                src = _read_json(os.path.join(ws.datasets, did, "source.json")) or {}
                 out.append({k: s[k] for k in ("dataset_id", "name", "source_path")} | {
                     "total_samples": (s["profile"] or {}).get("total_samples"),
                     "classes": (s["profile"] or {}).get("classes"),
@@ -345,7 +421,7 @@ def r_list_datasets(h, m, q):
 
 
 def r_get_dataset(h, m, q):
-    return dataset_summary(m.group(1))
+    return dataset_summary(h.ws, m.group(1))
 
 
 def r_inspect(h, m, q):
@@ -359,9 +435,11 @@ def r_inspect(h, m, q):
         raise ApiError(400, "Path not found, or not a supported dataset (image folder, CSV, XLS or XLSX file).")
     if os.path.normcase(path).startswith(os.path.normcase(WORK_DIR)):
         raise ApiError(400, "That path is inside the ML work directory, not a source dataset.")
+    label_args = _label_source_args(body.get("label_source"), path)  # validated before anything is written
 
+    ws = h.ws
     dataset_id = hashlib.sha256(os.path.normcase(path).encode("utf-8")).hexdigest()[:12]
-    d = os.path.join(DATASETS_DIR, dataset_id)
+    d = os.path.join(ws.datasets, dataset_id)
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "source.json"), "w", encoding="utf-8") as f:
         json.dump({"path": path, "name": os.path.basename(path.rstrip("\\/")) or path}, f)
@@ -371,21 +449,88 @@ def r_inspect(h, m, q):
     if os.path.exists(os.path.join(d, "recommendations.json")):
         os.remove(os.path.join(d, "recommendations.json"))
 
-    cmd = _module_cmd("hospital_client.dataset", "inspect", path, "--output", os.path.join(d, "m4"))
-    job = start_job("inspect", cmd, lambda j: _finish_inspect(dataset_id), {"dataset_id": dataset_id})
+    cmd = _module_cmd("hospital_client.dataset", "inspect", path, "--output", os.path.join(d, "m4"), *label_args)
+    job = start_job("inspect", cmd, lambda j: _finish_inspect(ws, dataset_id), {"dataset_id": dataset_id},
+                    owner=ws.hospital_id)
     return 202, job.to_dict()
 
 
-def _finish_inspect(dataset_id: str) -> dict:
-    s = dataset_summary(dataset_id)
+def _metadata_csv_path(path) -> str:
+    if not isinstance(path, str) or not path.strip() or len(path) > 1000:
+        raise ApiError(400, "A metadata CSV path is required.")
+    path = os.path.abspath(os.path.expanduser(path.strip()))
+    if not (os.path.isfile(path) and path.lower().endswith(".csv")):
+        raise ApiError(400, "The metadata file must be an existing .csv file.")
+    return path
+
+
+def _label_source_args(spec, dataset_path: str) -> list:
+    """Module 4 CLI arguments for image labels from a metadata CSV (none for folder labels)."""
+    if not spec:
+        return []
+    if not os.path.isdir(dataset_path) or not isinstance(spec, dict):
+        raise ApiError(400, "Labels from a metadata CSV apply to image folders only.")
+    args = ["--labels-csv", _metadata_csv_path(spec.get("csv_path"))]
+    for key, flag, required in (("image_column", "--image-column", True), ("label_column", "--label-column", True),
+                                ("group_column", "--group-column", False)):
+        value = spec.get(key)
+        if not value and not required:
+            continue
+        if not isinstance(value, str) or not value.strip() or len(value) > 200:
+            raise ApiError(400, f"Choose the {key.replace('_', ' ')} of the metadata CSV.")
+        args += [flag, value]
+    label_map = spec.get("label_map")
+    if label_map is not None:
+        if not (isinstance(label_map, dict) and 0 < len(label_map) <= 500 and all(
+                isinstance(k, str) and (v is None or isinstance(v, str)) for k, v in label_map.items())):
+            raise ApiError(400, "The label map must map each CSV value to a class name or null.")
+        args += ["--label-map", json.dumps(label_map)]
+    return args
+
+
+def r_metadata_csv(h, m, q):
+    """Columns of a metadata CSV and, for a chosen label column, its distinct values with counts."""
+    from hospital_client.dataset.ingestion.metadata_labels import label_value_counts, read_csv_columns
+    body = h.json_body()
+    path = _metadata_csv_path(body.get("path"))
+    try:
+        out = {"columns": read_csv_columns(path)}
+        if body.get("label_column"):
+            counts = label_value_counts(path, str(body["label_column"]))
+            out["values"] = [{"value": v, "count": c} for v, c in sorted(counts.items(), key=lambda x: -x[1])]
+    except ValueError as e:
+        raise ApiError(400, str(e))
+    except Exception:
+        raise ApiError(400, "Could not read that file as a CSV.")
+    return out
+
+
+_BROWSE_CSV_SCRIPT = (
+    "import tkinter as tk\nfrom tkinter import filedialog\n"
+    "r = tk.Tk(); r.withdraw(); r.attributes('-topmost', True)\n"
+    "print(filedialog.askopenfilename(title='Locate the metadata CSV with image labels', "
+    "filetypes=[('CSV files', '*.csv')]) or '')\n"
+)
+
+
+def r_browse_csv(h, m, q):
+    """Native file picker for a metadata CSV on THIS machine."""
+    proc = subprocess.run([sys.executable, "-c", _BROWSE_CSV_SCRIPT], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=600)
+    path = proc.stdout.strip()
+    return {"path": os.path.abspath(path) if path else None}
+
+
+def _finish_inspect(ws: Workspace, dataset_id: str) -> dict:
+    s = dataset_summary(ws, dataset_id)
     if s["profile"] is None:
         raise RuntimeError("Inspection finished but no dataset_profile.json was written.")
     return s
 
 
 def r_preprocess(h, m, q):
-    dataset_id = m.group(1)
-    d = dataset_dir(dataset_id)
+    dataset_id, ws = m.group(1), h.ws
+    d = dataset_dir(ws, dataset_id)
     profile = os.path.join(d, "m4", "dataset_profile.json")
     if not os.path.isfile(profile):
         raise ApiError(409, "Inspect the dataset (Module 4) before preprocessing.")
@@ -399,6 +544,10 @@ def r_preprocess(h, m, q):
     shutil.rmtree(out, ignore_errors=True)
     args = ["preprocess", source, "--profile", profile, "--output", out, "--mode", mode,
             "--invalid-split-policy", policy]
+    # A dataset with only train/ and test/ gets a validation split carved from train
+    # (test untouched); Module 7 needs a validation split to train.
+    if body.get("generate_missing_splits", True):
+        args.append("--generate-missing-splits")
     group_map = body.get("group_id_map_path")
     if group_map:
         if not isinstance(group_map, str) or not group_map.lower().endswith(".json") or not os.path.isfile(group_map):
@@ -413,19 +562,19 @@ def r_preprocess(h, m, q):
         os.remove(os.path.join(d, "recommendations.json"))
 
     job = start_job("preprocess", _module_cmd("hospital_client.preprocessing", *args),
-                    lambda j: _finish_preprocess(dataset_id), {"dataset_id": dataset_id})
+                    lambda j: _finish_preprocess(ws, dataset_id), {"dataset_id": dataset_id}, owner=ws.hospital_id)
     return 202, job.to_dict()
 
 
-def _finish_preprocess(dataset_id: str) -> dict:
-    s = dataset_summary(dataset_id)
+def _finish_preprocess(ws: Workspace, dataset_id: str) -> dict:
+    s = dataset_summary(ws, dataset_id)
     if s["preprocessing"] is None:
         raise RuntimeError("Preprocessing finished but no preprocessing_report.json was written.")
     return s
 
 
-def _require_preprocessed(dataset_id: str) -> str:
-    d = dataset_dir(dataset_id)
+def _require_preprocessed(ws: Workspace, dataset_id: str) -> str:
+    d = dataset_dir(ws, dataset_id)
     m5 = os.path.join(d, "m5")
     if not os.path.isfile(os.path.join(m5, "preprocessing_report.json")):
         raise ApiError(409, "Preprocess the dataset (Module 5) first.")
@@ -433,18 +582,18 @@ def _require_preprocessed(dataset_id: str) -> str:
 
 
 def r_recommend(h, m, q):
-    dataset_id = m.group(1)
-    m5 = _require_preprocessed(dataset_id)
-    os.makedirs(TRAINED_DIR, exist_ok=True)
-    cmd = _module_cmd("hospital_client.resource_training", "recommend", "--dataset", m5, "--output", TRAINED_DIR)
+    dataset_id, ws = m.group(1), h.ws
+    m5 = _require_preprocessed(ws, dataset_id)
+    os.makedirs(ws.trained, exist_ok=True)
+    cmd = _module_cmd("hospital_client.resource_training", "recommend", "--dataset", m5, "--output", ws.trained)
 
     def finish(job):
         recs = parse_json_output("\n".join(job.lines))
-        with open(os.path.join(dataset_dir(dataset_id), "recommendations.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(dataset_dir(ws, dataset_id), "recommendations.json"), "w", encoding="utf-8") as f:
             json.dump(recs, f, indent=2)
         return recs
 
-    job = start_job("recommend", cmd, finish, {"dataset_id": dataset_id})
+    job = start_job("recommend", cmd, finish, {"dataset_id": dataset_id}, owner=ws.hospital_id)
     return 202, job.to_dict()
 
 
@@ -456,8 +605,8 @@ def _choice_architecture(d: str, choice: str):
 
 
 def r_train(h, m, q):
-    dataset_id = m.group(1)
-    m5 = _require_preprocessed(dataset_id)
+    dataset_id, ws = m.group(1), h.ws
+    m5 = _require_preprocessed(ws, dataset_id)
     body = h.json_body()
     choice, architecture = body.get("choice"), body.get("architecture")
     selection_args = []
@@ -480,44 +629,44 @@ def r_train(h, m, q):
         selection_args = ["--choice", choice]
         # Name the run after the model Module 8 recommended for this choice (e.g. resnet50);
         # the choice itself is kept in <model_id>_run.json.
-        model_name = _choice_architecture(dataset_dir(dataset_id), choice) or choice
+        model_name = _choice_architecture(dataset_dir(ws, dataset_id), choice) or choice
     else:
         raise ApiError(400, f"Send choice (one of {sorted(CHOICES)}) or an architecture.")
-    name = _read_json(os.path.join(dataset_dir(dataset_id), "source.json"))["name"]
+    name = _read_json(os.path.join(dataset_dir(ws, dataset_id), "source.json"))["name"]
     model_id = f"{_slug(body.get('name') or name)}_{model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    os.makedirs(TRAINED_DIR, exist_ok=True)
+    os.makedirs(ws.trained, exist_ok=True)
     meta = {"dataset_id": dataset_id, "dataset_name": name, "choice": choice, "model_id": model_id,
             "request_id": body.get("request_id") if isinstance(body.get("request_id"), str) else None,
             "started_at": datetime.now().isoformat()}
-    cmd = _module_cmd("hospital_client.resource_training", "train", "--dataset", m5, "--output", TRAINED_DIR,
-                      "--model-id", model_id, *selection_args, "--test", "--plots")
-    job = start_job("train", cmd, lambda j: training_run(model_id), meta)
-    with open(os.path.join(TRAINED_DIR, f"{model_id}_run.json"), "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2)
+    # Module 8 picks the final architecture, so it also places the run in trained/<architecture>/.
+    cmd = _module_cmd("hospital_client.resource_training", "train", "--dataset", m5, "--output", ws.trained,
+                      "--model-id", model_id, *selection_args, "--test", "--plots", "--architecture-subdir")
+    job = start_job("train", cmd, lambda j: training_run(ws, model_id), meta,
+                    owner=ws.hospital_id, on_exit=_run_meta_writer(ws, model_id, meta))
     return 202, job.to_dict()
 
 
 def r_get_job(h, m, q):
-    return get_job(m.group(1)).to_dict()
+    return get_job(m.group(1), h.ws.hospital_id).to_dict()
 
 
 def r_cancel_job(h, m, q):
-    job = get_job(m.group(1))
+    job = get_job(m.group(1), h.ws.hospital_id)
     cancel_job(job)
     return job.to_dict()
 
 
 def r_list_runs(h, m, q):
     runs = []
-    if os.path.isdir(TRAINED_DIR):
-        for fname in os.listdir(TRAINED_DIR):
+    for d in h.ws.arch_dirs():
+        for fname in os.listdir(d):
             if not fname.endswith("_training_result.json"):
                 continue
             model_id = fname[: -len("_training_result.json")]
             if not MODEL_ID_RE.match(model_id):
                 continue
-            res = _read_json(os.path.join(TRAINED_DIR, fname))
-            run = _read_json(os.path.join(TRAINED_DIR, f"{model_id}_run.json")) or {}
+            res = _read_json(os.path.join(d, fname))
+            run = _read_json(os.path.join(d, f"{model_id}_run.json")) or {}
             runs.append({
                 "model_id": model_id, "architecture": res.get("architecture"), "status": res.get("status"),
                 "epochs_run": res.get("epochs_run"), "duration_seconds": res.get("training_duration_seconds"),
@@ -526,6 +675,7 @@ def r_list_runs(h, m, q):
                 "checkpoint_version": res.get("checkpoint_version"),
                 "ready_for_federation": res.get("ready_for_federation"),
                 "dataset_name": run.get("dataset_name"), "choice": run.get("choice"),
+                "job_id": run.get("job_id"), "round_id": run.get("round_id"),
                 "generated_at": res.get("generated_at"),
             })
     runs.sort(key=lambda r: r.get("generated_at") or "", reverse=True)
@@ -533,15 +683,16 @@ def r_list_runs(h, m, q):
 
 
 def r_get_run(h, m, q):
-    return training_run(m.group(1))
+    return training_run(h.ws, m.group(1))
 
 
 def r_get_plot(h, m, q):
     model_id, name = m.group(1), m.group(2)
     if not MODEL_ID_RE.match(model_id) or name not in PLOT_FILES:
         raise ApiError(404, "Unknown plot.")
-    path = os.path.join(TRAINED_DIR, f"{model_id}_plots", name)
-    if not os.path.isfile(path):
+    d = h.ws.run_dir(model_id)
+    path = os.path.join(d, f"{model_id}_plots", name) if d else None
+    if path is None or not os.path.isfile(path):
         raise ApiError(404, "Plot not found.")
     with open(path, "rb") as f:
         return ("image/png", f.read())
@@ -549,12 +700,14 @@ def r_get_plot(h, m, q):
 
 def r_models(h, m, q):
     from hospital_client.model_management.store import ModelStore
-    models_root = os.path.join(TRAINED_DIR, "models")
     out = []
-    if os.path.isdir(models_root):
+    for d in h.ws.arch_dirs():
+        models_root = os.path.join(d, "models")
+        if not os.path.isdir(models_root):
+            continue
         store = ModelStore(models_root)
         for model_id in store.list_model_ids():
-            run = _read_json(os.path.join(TRAINED_DIR, f"{model_id}_run.json")) or {}
+            run = _read_json(os.path.join(d, f"{model_id}_run.json")) or {}
             for meta in store.list_versions(model_id):
                 out.append(meta.to_dict() | {"dataset_name": run.get("dataset_name")})
     out.sort(key=lambda x: x.get("created_at") or "", reverse=True)
@@ -577,14 +730,17 @@ def r_predict(h, m, q):
     data = h.raw_body()
     if not data:
         raise ApiError(400, "Empty image.")
+    models_root = h.ws.models_root(model_id)
+    if models_root is None:
+        raise ApiError(404, "Unknown model for this hospital.")
 
-    os.makedirs(TMP_DIR, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(suffix=ext, dir=TMP_DIR)
+    os.makedirs(h.ws.tmp, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(suffix=ext, dir=h.ws.tmp)
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
         proc = subprocess.run(
-            _module_cmd("hospital_client.inference", "predict", "--models-root", os.path.join(TRAINED_DIR, "models"),
+            _module_cmd("hospital_client.inference", "predict", "--models-root", models_root,
                         "--model-id", model_id, "--version", version, "--device", device, "--image", tmp, "--json"),
             cwd=REPO_ROOT, env=_child_env(), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=600)
@@ -603,9 +759,9 @@ def r_evaluate_eligibility(h, m, q):
     dataset_id = body.get("dataset_id")
     if not job or not dataset_id:
         raise ApiError(400, "job and dataset_id are required")
-        
-    m5 = _require_preprocessed(dataset_id)
-    d = dataset_dir(dataset_id)
+
+    m5 = _require_preprocessed(h.ws, dataset_id)
+    d = dataset_dir(h.ws, dataset_id)
     src = _read_json(os.path.join(d, "source.json")) or {}
     
     # Use explicit declared_task — NEVER use dataset name as task
@@ -633,7 +789,7 @@ def r_evaluate_eligibility(h, m, q):
 def r_set_dataset_task(h, m, q):
     """Associate a local dataset with an explicit declared_task."""
     dataset_id = m.group(1)
-    d = dataset_dir(dataset_id)
+    d = dataset_dir(h.ws, dataset_id)
     body = h.json_body()
     declared_task = body.get("declared_task")
     if declared_task is not None and (not isinstance(declared_task, str) or not declared_task.strip()):
@@ -667,6 +823,73 @@ def r_get_task_vocabulary(h, m, q):
         return {"tasks": []}
 
 
+def _submit_handoff(ws, model_id: str, job_id: str, round_id: str, token: str, api_url: str = BACKEND_URL) -> dict:
+    """POSTs this run's federation handoff folder to the Module 9 round (backend /submit)."""
+    d = ws.run_dir(model_id)
+    handoff_dir = os.path.join(d, f"{model_id}_federation_handoff") if d else None
+    if not handoff_dir or not os.path.isdir(handoff_dir):
+        raise ApiError(404, "This run has no federation handoff to submit.")
+    req = urllib.request.Request(
+        f"{api_url}/federation/jobs/{job_id}/rounds/{round_id}/submit",
+        data=json.dumps({"handoff_dir": handoff_dir}).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            err = json.load(e).get("error")
+        except Exception:
+            err = None
+        msg = err.get("message") if isinstance(err, dict) else err
+        raise ApiError(502, f"Federation server refused the update: {msg or e.reason}")
+    except urllib.error.URLError as e:
+        raise ApiError(502, f"Federation server unreachable: {e.reason}")
+
+
+def _ensure_base_model(ws, architecture: str, rnd: dict, token: str) -> None:
+    """Downloads the round's canonical base checkpoint into this hospital's model store
+    when it is not there yet. The Trainer verifies its checksum against the round
+    before the first training step, so a corrupted or altered copy is refused."""
+    from hospital_client.model_management.validation import ARTIFACT_FILENAME, METADATA_FILENAME
+    model_id, version, round_id = str(rnd.get("base_model_id") or ""), rnd.get("base_model_version"), str(rnd.get("round_id") or "")
+    if not (MODEL_ID_RE.match(model_id) and MODEL_ID_RE.match(round_id) and isinstance(version, int) and version >= 1):
+        raise ApiError(400, "The round's base model reference is invalid.")
+    dest = os.path.join(ws.trained, architecture, "models", model_id, f"v{version}")
+    if os.path.isdir(dest):
+        return
+    os.makedirs(ws.tmp, exist_ok=True)
+    tmp = tempfile.mkdtemp(dir=ws.tmp)
+    try:
+        for name in (ARTIFACT_FILENAME, METADATA_FILENAME):
+            req = urllib.request.Request(f"{BACKEND_URL}/federation/rounds/{round_id}/base-model/{name}",
+                                         headers={"Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(req, timeout=300) as r, open(os.path.join(tmp, name), "wb") as f:
+                shutil.copyfileobj(r, f)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        os.replace(tmp, dest)
+    except urllib.error.HTTPError as e:
+        raise ApiError(502, f"Could not download the round's base model {model_id} v{version}: {e.reason}")
+    except urllib.error.URLError as e:
+        raise ApiError(502, f"Federation server unreachable: {e.reason}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def r_submit_handoff(h, m, q):
+    """Retry: submit a finished federated run to the job/round recorded in its run.json."""
+    model_id = m.group(1)
+    if not MODEL_ID_RE.match(model_id):
+        raise ApiError(400, "Invalid model id.")
+    d = h.ws.run_dir(model_id)
+    run = (_read_json(os.path.join(d, f"{model_id}_run.json")) if d else None) or {}
+    job_id, round_id = run.get("job_id"), run.get("round_id")
+    if not (job_id and round_id and MODEL_ID_RE.match(job_id) and MODEL_ID_RE.match(round_id)):
+        raise ApiError(409, "This run did not record its federation job and round, so it cannot be resubmitted.")
+    token = h.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    return _submit_handoff(h.ws, model_id, job_id, round_id, token)
+
+
 def r_federated_train(h, m, q):
     from hospital_client.federation.manifest_filter import create_job_manifests
     body = h.json_body()
@@ -674,32 +897,39 @@ def r_federated_train(h, m, q):
     dataset_id = body.get("dataset_id")
     if not job or not dataset_id:
         raise ApiError(400, "job and dataset_id are required")
-        
-    m5 = _require_preprocessed(dataset_id)
+    ws = h.ws
+    # Both become folder/file names below, and they arrive in the request body.
+    if not MODEL_ID_RE.match(str(job.get("federation_job_id") or "")) or not ARCH_RE.match(str(job.get("architecture") or "")):
+        raise ApiError(400, "Invalid federation job id or architecture.")
+
+    m5 = _require_preprocessed(ws, dataset_id)
     class_mapping = job.get("class_mapping", {})
-    
-    # Create run-isolated filtered manifests
-    federation_runs_dir = os.path.join(WORK_DIR, "federation_runs")
+
+    # Create run-isolated filtered manifests. They reference this hospital's own
+    # files, so they live in its workspace, not in a folder shared by all hospitals.
     run_dir, counts = create_job_manifests(
         job_id=job["federation_job_id"],
         original_manifest_dir=m5,
-        output_base_dir=federation_runs_dir,
+        output_base_dir=ws.federation_runs,
         class_mapping=class_mapping
     )
-    
+
     if counts.get("train", 0) == 0:
         raise ApiError(400, "Filtered training dataset has 0 samples for this job's classes.")
-    
-    dataset_name = _read_json(os.path.join(dataset_dir(dataset_id), "source.json"))["name"]
+
+    dataset_name = _read_json(os.path.join(dataset_dir(ws, dataset_id), "source.json"))["name"]
     model_id = f"FED_{job['federation_job_id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    
-    os.makedirs(TRAINED_DIR, exist_ok=True)
+    if not MODEL_ID_RE.match(model_id):
+        raise ApiError(400, "Federation job id is too long.")
+
+    os.makedirs(ws.trained, exist_ok=True)
     meta = {
         "dataset_id": dataset_id,
         "dataset_name": dataset_name,
         "choice": "federated",
         "model_id": model_id,
         "job_id": job["federation_job_id"],
+        "round_id": body.get("round_id"),
         "run_dir": run_dir,
         "started_at": datetime.now().isoformat()
     }
@@ -708,14 +938,18 @@ def r_federated_train(h, m, q):
     # --canonical-mapping passes the job's class mapping to M7 via M8
     cmd = _module_cmd(
         "hospital_client.resource_training", "train", 
-        "--dataset", run_dir, 
-        "--output", TRAINED_DIR,
-        "--model-id", model_id, 
+        "--dataset", run_dir,
+        "--output", ws.trained,
+        "--model-id", model_id,
         "--architecture", job["architecture"],
         "--canonical-mapping", json.dumps(class_mapping),
-        "--federation-job-architecture", job["architecture"]
+        "--federation-job-architecture", job["architecture"],
+        "--architecture-subdir",  # the round's canonical base model is read from trained/<architecture>/models
     )
-    
+    # Same held-out evaluation and plots as a local run, when the dataset has a test split.
+    if counts.get("test", 0) > 0:
+        cmd.extend(["--test", "--plots"])
+
     # Pass epochs if specified in training requirements
     reqs = job.get("training_requirements") or {}
     epochs = reqs.get("epochs")
@@ -729,6 +963,8 @@ def r_federated_train(h, m, q):
     # Find the active round to extract canonical base model provenance
     active_round = next((r for r in job.get("rounds", []) if r["round_id"] == round_id), None)
     if active_round and active_round.get("base_model_id"):
+        token = h.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+        _ensure_base_model(ws, job["architecture"], active_round, token)
         cmd.extend([
             "--canonical-base-model-id", active_round["base_model_id"],
             "--canonical-base-model-version", str(active_round["base_model_version"]),
@@ -736,28 +972,17 @@ def r_federated_train(h, m, q):
         ])
 
     def _finalize(j):
-        res = training_run(model_id)
-        if (res.get("result") or {}).get("ready_for_federation"):
-            handoff_dir = os.path.join(TRAINED_DIR, f"{model_id}_federation_handoff")
-            if os.path.isdir(handoff_dir) and auth_token and api_url and round_id:
-                import urllib.request
-                import json
-                req_url = f"{api_url}/federation/jobs/{job['federation_job_id']}/rounds/{round_id}/submit"
-                data = json.dumps({"handoff_dir": handoff_dir}).encode('utf-8')
-                req = urllib.request.Request(req_url, data=data, headers={
-                    'Content-Type': 'application/json',
-                    'Authorization': f"Bearer {auth_token}"
-                }, method='POST')
-                try:
-                    with urllib.request.urlopen(req) as response:
-                        print("Automatically submitted federation handoff to M9.")
-                except Exception as e:
-                    print("Failed to auto-submit federation handoff to M9:", e)
+        res = training_run(ws, model_id)
+        if (res.get("result") or {}).get("ready_for_federation") and auth_token and api_url and round_id:
+            try:
+                _submit_handoff(ws, model_id, job["federation_job_id"], round_id, auth_token, api_url)
+                print("Automatically submitted federation handoff to M9.")
+            except ApiError as e:
+                print("Failed to auto-submit federation handoff to M9:", e)
         return res
 
-    job_handle = start_job("train", cmd, _finalize, meta)
-    with open(os.path.join(TRAINED_DIR, f"{model_id}_run.json"), "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2)
+    job_handle = start_job("train", cmd, _finalize, meta,
+                           owner=ws.hospital_id, on_exit=_run_meta_writer(ws, model_id, meta))
     return 202, job_handle.to_dict()
 
 
@@ -765,6 +990,8 @@ ROUTES = [
     ("GET", re.compile(r"/api/ml/health"), r_health, True),
     ("GET", re.compile(r"/api/ml/resources"), r_resources, False),
     ("POST", re.compile(r"/api/ml/browse-folder"), r_browse, False),
+    ("POST", re.compile(r"/api/ml/browse-csv"), r_browse_csv, False),
+    ("POST", re.compile(r"/api/ml/metadata-csv"), r_metadata_csv, False),
     ("GET", re.compile(r"/api/ml/datasets"), r_list_datasets, False),
     ("POST", re.compile(r"/api/ml/datasets/inspect"), r_inspect, False),
     ("GET", re.compile(r"/api/ml/datasets/([0-9a-f]{12})"), r_get_dataset, False),
@@ -780,6 +1007,7 @@ ROUTES = [
     ("POST", re.compile(r"/api/ml/predict"), r_predict, False),
     ("POST", re.compile(r"/api/ml/federation/evaluate-eligibility"), r_evaluate_eligibility, False),
     ("POST", re.compile(r"/api/ml/federation/participate"), r_federated_train, False),
+    ("POST", re.compile(r"/api/ml/federation/submit/([A-Za-z0-9_\-]+)"), r_submit_handoff, False),
     ("POST", re.compile(r"/api/ml/datasets/([0-9a-f]{12})/set-task"), r_set_dataset_task, False),
     ("GET", re.compile(r"/api/ml/federation/task-vocabulary"), r_get_task_vocabulary, False),
 ]
@@ -854,7 +1082,7 @@ class Handler(BaseHTTPRequestHandler):
                 match = pattern.fullmatch(url.path)
                 if match and route_method == method:
                     if not public:
-                        authenticate(self.headers)
+                        self.ws = Workspace(authenticate(self.headers).get("hospital_id"))
                     out = handler(self, match, parse_qs(url.query))
                     status = 200
                     if isinstance(out, tuple) and isinstance(out[0], int):
@@ -877,10 +1105,9 @@ def make_server(port: int = PORT) -> ThreadingHTTPServer:
 
 
 def main():
-    for d in (DATASETS_DIR, TRAINED_DIR, TMP_DIR):
-        os.makedirs(d, exist_ok=True)
+    os.makedirs(WORK_DIR, exist_ok=True)
     server = make_server()
-    print(f"MedFL local ML service on http://{HOST}:{PORT}/api/ml  (work dir: {WORK_DIR})")
+    print(f"MedFL local ML service on http://{HOST}:{PORT}/api/ml  (work dir: {WORK_DIR}/<hospital_id>)")
     print(f"Allowed UI origins: {sorted(ORIGINS)} | auth via {BACKEND_URL}/auth/me")
     try:
         server.serve_forever()

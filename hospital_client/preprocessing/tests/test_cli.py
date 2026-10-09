@@ -46,3 +46,14 @@ def test_cli_no_args(mock_print_help):
     main()
     mock_print_help.assert_called_once()
 
+
+
+@patch("hospital_client.preprocessing.cli.PreprocessingEngine")
+def test_cli_generate_missing_splits_flag(mock_engine):
+    base = ["__main__.py", "preprocess", "d", "--profile", "p.json", "--output", "o"]
+    with patch("sys.argv", base):
+        main()
+    assert mock_engine.call_args.args[0].split.generate_missing_splits_from_train is False   # default unchanged
+    with patch("sys.argv", base + ["--generate-missing-splits"]):
+        main()
+    assert mock_engine.call_args.args[0].split.generate_missing_splits_from_train is True

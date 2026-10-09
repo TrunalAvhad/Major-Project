@@ -28,7 +28,7 @@
 - [x] Role Switch Modal (Lead FL Investigator ↔ Consortium Admin Tier-1)
 - [x] MedFL.Secure Hardware Attestation Login Screen (FIDO2 / YubiKey / SAML 2.0)
 - [x] Consortium Access Request Wizard (`SEC-792-REQ`)
-- [x] State Management Architecture (`AppContext.jsx`) with dynamic metrics
+- [x] State Management Architecture (Zustand stores in `src/stores/`; demo data isolated in `src/mocks/`)
 - [x] Automated Module 1 Backend API Integration (`.env` configuration)
 - [x] Documentation & Production Verification Complete
 
@@ -128,11 +128,11 @@ Module 2 contains 16 distinct operational screens and dialog suites:
 - **Convergence Curves:** Live multi-metric training progress charting loss decay and validation accuracy across rounds.
 - **Node Latency & Performance Stack Bar:** Inter-hospital synchronization times across Tokyo, Berlin, Boston, and Geneva nodes.
 
-### 2. Federated Training Center (`FederatedTrainingView.jsx`)
-- Round-by-round training controller with active status indicators (`RUNNING`, `PAUSED`, `STOPPED`).
-- Aggregation algorithm selector (Federated Averaging `FedAvg`, `FedProx`, `Scaffold`).
-- Round countdown, participant readiness gates, and global parameter aggregation stream.
-- One-click trigger for the **Halt Training Dialog**.
+### 2. Federation Jobs & Rounds (`FederatedTrainingView.jsx`, admin)
+- Create a Module 9 job (task, architecture, class mapping, minimum participants), delete or archive jobs and rounds.
+- **Open round N**: deadline (required, in the future) and minimum participants. The round's base model is chosen by Module 9: the job's latest global model, or one shared freshly initialised seed (`SEED_<job_id>`) when the job has none yet. Hospitals download it (`GET /federation/rounds/:round_id/base-model/:file`) and verify its checksum before training. Only one round per job can be in progress.
+- Per-round participants (hospital name and id) and their accepted/rejected status.
+- **Aggregate Round** (also on the Admin Overview) opens a confirmation listing every hospital that joined the round, by name and id, with its update status; before the deadline it warns that the round closes early (`force_close`, Module 9 still requires the minimum accepted updates). It then shows the aggregation in progress and the result (new global model, round status, which hospitals were notified). Every active hospital that did not join the round gets a `ROUND_CLOSED` notification; opening a round sends `ROUND_OPEN` to every active hospital.
 
 ### 3. Experiments & Tuning (`ExperimentsView.jsx`)
 - Experiment registry tracking ID, modality (Pneumonia Chest X-Ray, Brain MRI), target architecture, client cohort, and convergence status.
@@ -229,4 +229,22 @@ The application reads its backend API endpoint from `.env`:
 ```env
 VITE_API_URL=http://localhost:5000/api/v1
 ```
-If the backend is not running or is offline, Module 2 automatically operates in high-fidelity mock workstation mode with zero crash risk.
+Sign-in requires the backend: there is no offline or demo login. If the backend is unreachable, sign-in fails with an error.
+
+### Data sources per screen
+| Screen | Role | Source |
+|---|---|---|
+| Dashboard | admin | M9 jobs/rounds/global models (`/federation/*`), `/admin/telemetry`, `/training-requests` |
+| Dashboard | researcher | own training requests (`/training-requests/my`) |
+| Training (researcher) | researcher | `POST /training-requests`, `/training-requests/my`, live Socket.io room events |
+| Monitoring | researcher | own open requests' per-hospital epoch/loss/accuracy, live |
+| Hospitals | both | `/training-requests` participation; admins also `/admin/telemetry` and M9 rounds |
+| Federation Jobs & Rounds | admin | `/federation/jobs`, `POST /federation/jobs`, `POST /federation/rounds`, `POST /federation/rounds/aggregate` |
+| Global Models | admin | `/federation/models` (+ evaluations), `/admin/stored-models`, `/federation/architectures` |
+| Update Validation (Security) | admin | M9 job details: every submitted update and its rejection reason |
+| User Management | admin | `GET /admin/users`, `POST /admin/users/:id/{approve,reject,suspend}` |
+| Audit Log | admin | `GET /admin/audit-logs` |
+| Profile / Settings | both | `/auth/me`, `POST /auth/change-password` |
+| Experiments, Notifications, Messages, States demo | - | **Mock data** (Modules 18/20 not implemented), shown with a "Mock data" banner |
+
+Hardware/GPU telemetry per hospital (Module 13), differential privacy (Module 10), Byzantine detection (Module 12) and model export (Module 15) are not implemented; the screens say so instead of showing figures.

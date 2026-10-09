@@ -44,12 +44,12 @@ const PrivacyNotice = ({ compact = false }) => {
       </div>
       <div>
         <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--status-healthy)', marginBottom: '2px' }}>
-          Strict Hospital Privacy Boundary & HIPAA Compliance
+          Hospital data boundary
         </div>
         <p style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-          Raw patient scans and Protected Health Information (PHI) are hard-locked on local storage. 
-          Module 3 invokes local Module 4 inspection and Module 5 preprocessing without network transmission. 
-          Federated Learning (Module 9) will only transmit differential privacy-protected weight updates.
+          Raw scans stay on this machine: Module 4 inspection, Module 5 preprocessing and local training run here
+          without uploading images. Federated learning (Module 9) sends model parameter updates and summary metrics;
+          differential privacy (Module 10) is not implemented yet, so those updates are not noise-protected.
         </p>
       </div>
     </div>

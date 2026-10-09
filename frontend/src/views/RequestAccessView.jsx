@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
+import { useAuthStore } from '../stores/authStore';
+import { useUiStore } from '../stores/uiStore';
 import { ShieldCheck, FileCheck, CheckCircle2, KeyRound, ArrowLeft, Send, AlertCircle, Loader2, Database } from 'lucide-react';
 
 export const RequestAccessView = () => {
-  const { register, setActiveScreen } = useApp();
-  const [institution, setInstitution] = useState('Johns Hopkins Medicine');
-  const [tokenRegistered, setTokenRegistered] = useState(true);
+  const register = useAuthStore((s) => s.register);
+  const setActiveScreen = useUiStore((s) => s.setActiveScreen);
   const [submitted, setSubmitted] = useState(false);
-  const [name, setName] = useState('Dr. Trunal Avhad');
-  const [email, setEmail] = useState('trunal@rad.jhmi.edu');
-  const [password, setPassword] = useState('trunalPass123!');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
   const [createdUser, setCreatedUser] = useState(null);
@@ -58,11 +58,9 @@ export const RequestAccessView = () => {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--status-healthy)' }}>
           <ShieldCheck size={14} />
-          <span><strong>INSTITUTIONAL VERIFICATION CHANNEL [ONLINE]</strong> :: GOV-SPEC-5441-REV3</span>
+          <span><strong>RESEARCHER ACCESS REQUEST</strong></span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '10px' }} className="font-mono">
-          <span>ENCLAVE ATTESTATION: <strong style={{ color: 'var(--status-healthy)' }}>SGX-V2 ACTIVE</strong></span>
-          <span>CONSENSUS NODES: <strong style={{ color: '#38bdf8' }}>6 VERIFIED</strong></span>
         </div>
       </div>
 
@@ -84,7 +82,7 @@ export const RequestAccessView = () => {
               Request Consortium Research Access
             </h1>
             <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              Apply for federated deep learning training authorization across participating hospital enclave nodes.
+              Apply for a researcher account on the federated deep learning platform.
             </p>
           </div>
 
@@ -96,10 +94,10 @@ export const RequestAccessView = () => {
             maxWidth: '340px'
           }}>
             <div style={{ fontSize: '11px', fontWeight: '600', color: 'var(--status-warning)', display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <span>SECURITY COUNCIL ATTESTATION</span>
+              <span>ADMIN APPROVAL REQUIRED</span>
             </div>
             <p style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px', lineHeight: 1.35 }}>
-              Account onboarding requires institutional email verification, IRB approval certificate, and Consortium Security Council approval.
+              New researcher accounts stay pending until a consortium admin approves them.
             </p>
           </div>
         </div>
@@ -193,20 +191,20 @@ export const RequestAccessView = () => {
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Dr. trunal"
+                    placeholder="e.g. Dr. Jane Doe"
                     style={{ width: '100%', height: '34px', background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)', borderRadius: '5px', padding: '0 10px', color: 'var(--text-primary)', fontSize: '12px' }}
                   />
                 </div>
                 <div>
                   <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                    INSTITUTIONAL CLINICAL EMAIL * <span style={{ color: 'var(--status-healthy)' }}>*Strictly .edu / .org</span>
+                    INSTITUTIONAL CLINICAL EMAIL *
                   </label>
                   <input
                     type="email"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="e.g. trunal@rad.jhmi.edu"
+                    placeholder="name@institution.org"
                     style={{ width: '100%', height: '34px', background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)', borderRadius: '5px', padding: '0 10px', color: 'var(--text-primary)', fontSize: '12px' }}
                   />
                 </div>
@@ -223,127 +221,8 @@ export const RequestAccessView = () => {
                     style={{ width: '100%', height: '34px', background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)', borderRadius: '5px', padding: '0 10px', color: 'var(--text-primary)', fontSize: '12px' }}
                   />
                 </div>
-                <div>
-                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                    PRIMARY AFFILIATED INSTITUTION / RESEARCH CENTER
-                  </label>
-                  <input
-                    type="text"
-                    value={institution}
-                    onChange={(e) => setInstitution(e.target.value)}
-                    placeholder="e.g. Johns Hopkins Medicine"
-                    style={{ width: '100%', height: '34px', background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)', borderRadius: '5px', padding: '0 10px', color: 'var(--text-primary)', fontSize: '12px' }}
-                  />
-                </div>
               </div>
             </div>
-
-            {/* Section 02 */}
-            <div className="card">
-              <div className="card-header">
-                <span className="card-title">02. INSTITUTIONAL REVIEW BOARD (IRB) &amp; COMPLIANCE</span>
-                <span className="badge badge-purple">HIPAA / GDPR BIO-ETHICS RECORD</span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                      ACTIVE IRB / ETHICS COMMITTEE PROTOCOL ID
-                    </label>
-                    <input
-                      type="text"
-                      defaultValue="IRB-2025-MED-8839-FED"
-                      style={{ width: '100%', height: '34px', background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)', borderRadius: '5px', padding: '0 10px', color: 'var(--text-primary)', fontSize: '12px' }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                      IRB APPROVAL CERTIFICATE (CRYPTOGRAPHIC DIGITAL RECORD)
-                    </label>
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      height: '34px',
-                      background: 'var(--bg-nested)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: '5px',
-                      padding: '0 10px',
-                      fontSize: '11px'
-                    }}>
-                      <span className="font-mono" style={{ color: 'var(--accent-teal)' }}>📄 irb_determination_signed_jhmi_2025.cert</span>
-                      <span style={{ color: 'var(--status-healthy)', fontSize: '10px' }}>SHA-256 Verified</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Statutory Undertaking */}
-                <div style={{
-                  background: 'rgba(16, 185, 129, 0.05)',
-                  border: '1px solid var(--status-healthy-border)',
-                  borderRadius: '6px',
-                  padding: '10px 12px',
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: '8px'
-                }}>
-                  <input type="checkbox" id="undertaking" defaultChecked style={{ marginTop: '3px', accentColor: 'var(--status-healthy)' }} />
-                  <label htmlFor="undertaking" style={{ fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer', lineHeight: 1.4 }}>
-                    <strong style={{ color: 'var(--text-primary)' }}>Statutory Non-Dissemination &amp; Zero-Raw-Data Protocol Undertaking:</strong> I certify under penalty of institutional disciplinary action and HIPAA/GDPR sanctions that all training rounds will execute exclusively via local containerized workers. Individual patient DICOM files, EHR notes, and genomic transcripts must NEVER exit institutional firewalls. Only securely aggregated, differential-privacy-injected model gradients (ε ≤ 0.5) will be transmitted to the central orchestrator.
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            {/* Section 03 */}
-            <div className="card">
-              <div className="card-header">
-                <span className="card-title">03. CRYPTOGRAPHIC IDENTITY &amp; KEY ENROLLMENT</span>
-                <span className="badge badge-cyan">ED25519 / FIDO2 HARDWARE ATTESTATION</span>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                <div>
-                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                    PUBLIC SIGNING KEY (ED25519 OR RSA-4096)
-                  </label>
-                  <textarea
-                    defaultValue="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOr8Y3e... vance@jhmi-enclave-lead"
-                    rows="3"
-                    className="font-mono"
-                    style={{ width: '100%', background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)', borderRadius: '5px', padding: '8px', color: 'var(--text-primary)', fontSize: '11px', resize: 'none' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                    HARDWARE SECURITY TOKEN (FIDO2 / WEBAUTHN)
-                  </label>
-                  <div style={{
-                    padding: '14px',
-                    borderRadius: '6px',
-                    background: tokenRegistered ? 'var(--status-healthy-bg)' : 'var(--bg-nested)',
-                    border: `1px solid ${tokenRegistered ? 'var(--status-healthy-border)' : 'var(--border-subtle)'}`,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    height: 'calc(100% - 20px)'
-                  }}>
-                    <div style={{ fontSize: '11px', color: tokenRegistered ? 'var(--status-healthy)' : 'var(--text-secondary)' }}>
-                      {tokenRegistered ? '✔ FIDO2 Hardware Token Registered (#YUBI-8839-FIPS)' : 'Mandatory: Touch YubiKey to enroll cryptographic hardware token'}
-                    </div>
-                    <button
-                      type="button"
-                      className={`btn ${tokenRegistered ? 'btn-secondary' : 'btn-primary'}`}
-                      style={{ fontSize: '11px', alignSelf: 'flex-start' }}
-                      onClick={() => setTokenRegistered(true)}
-                    >
-                      <KeyRound size={12} />
-                      <span>{tokenRegistered ? 'Re-enroll Key' : 'Register Security Key'}</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
             {/* Form Footer */}
             <div style={{
               display: 'flex',

@@ -2,6 +2,8 @@ import os
 import json
 import enum
 import time
+import shutil
+import tempfile
 import requests
 import subprocess
 import dataclasses
@@ -12,8 +14,11 @@ from federation.aggregation import Aggregator
 from federation.api_adapter import EventEmitter
 
 WORK_DIR = os.path.expanduser("~/medfl_ml_work")
-TRAINED_DIR = os.path.join(WORK_DIR, "trained")
-MODELS_DIR = os.path.join(TRAINED_DIR, "models")
+ARCHITECTURE = "mobilenet_v3_small"
+HOSPITAL_IDS = ["HOSP_868720", "HOSP_123456"]
+# Created once, then the SAME artifact is copied into every hospital's workspace
+# (the local ML service keeps each hospital's models in <WORK_DIR>/<hospital_id>/trained/<architecture>/models).
+MODELS_DIR = os.path.join(tempfile.mkdtemp(prefix="medfl_canonical_"), "models")
 BACKEND_URL = "http://localhost:5000/api/v1"
 LOCAL_API_URL = "http://localhost:8765"
 LOCAL_HEADERS = {"Origin": "http://localhost:5173"}
@@ -36,7 +41,7 @@ def enum_safe(obj):
 # ── A: Canonical Seed Model ───────────────────
 cmd = [
     "python", "-m", "hospital_client.model_management", "init",
-    "--architecture", "mobilenet_v3_small",
+    "--architecture", ARCHITECTURE,
     "--num-classes", "2",
     "--output", MODELS_DIR,
     "--model-id", CANONICAL_MODEL_ID
@@ -58,6 +63,11 @@ canonical_id = CANONICAL_MODEL_ID
 canonical_version = CANONICAL_VERSION
 print(f"Canonical: {canonical_id} v{canonical_version}")
 print(f"  param-checksum: {canonical_checksum}")
+
+for hosp in HOSPITAL_IDS:
+    dest = os.path.join(WORK_DIR, hosp, "trained", ARCHITECTURE, "models", CANONICAL_MODEL_ID)
+    shutil.copytree(os.path.join(MODELS_DIR, CANONICAL_MODEL_ID), dest, dirs_exist_ok=True)
+    print(f"  provisioned for {hosp}: {dest}")
 
 # ── B: Job & Round ────────────────────────────
 storage = FederationStorage(db_path="federation_metadata.db")

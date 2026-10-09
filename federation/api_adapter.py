@@ -206,20 +206,58 @@ def main():
             print(json.dumps({"success": True, "job": job}, cls=EnhancedJSONEncoder))
 
         elif action == "create_round":
+            import datetime
+            from federation.base_models import prepare_base_model
+            job = storage.get_job(req["job_id"])
+            if not job:
+                raise ValueError(f"Job {req['job_id']} does not exist.")
+            # Intake marks an update EXPIRED when now > deadline (string compare), so the
+            # deadline is required, must be in the future and is stored in one UTC format.
+            try:
+                deadline = datetime.datetime.fromisoformat(str(req.get("deadline", "")).replace("Z", "+00:00"))
+            except ValueError:
+                raise ValueError("A valid round deadline (ISO 8601 date and time) is required.")
+            if deadline.tzinfo is None:
+                raise ValueError("The round deadline must include a timezone.")
+            deadline = deadline.astimezone(datetime.timezone.utc)
+            if deadline <= datetime.datetime.now(datetime.timezone.utc):
+                raise ValueError("The round deadline must be in the future.")
+
+            # Every hospital must start from the same checkpoint; unless the caller names one,
+            # the round starts from the job's latest global model (or a fresh seed for round 1).
+            base_source = "provided"
+            base_id, base_version, base_checksum = req.get("base_model_id"), req.get("base_model_version", 1), req.get("base_model_checksum")
+            if not base_id:
+                job_models = [m for m in get_all_global_models(storage) if m["federation_job_id"] == job.federation_job_id]
+                previous = max(job_models, key=lambda m: m["version"]) if job_models else None
+                base_id, base_version, base_checksum = prepare_base_model(storage, job, previous)
+                base_source = previous["global_model_id"] if previous else "seed"
+
             rm = RoundManager(storage)
             rnd = rm.create_round(
                 federation_job_id=req["job_id"],
                 round_id=req["round_id"],
                 round_number=req["round_number"],
                 expected_participants=req.get("expected_participants", []),
-                minimum_participants=req.get("minimum_participants", 2),
-                deadline=req.get("deadline", ""),
-                base_model_id=req.get("base_model_id", ""),
-                base_model_version=req.get("base_model_version", 1),
-                base_model_checksum=req.get("base_model_checksum", "")
+                minimum_participants=req.get("minimum_participants", job.minimum_participants),
+                deadline=deadline.isoformat(),
+                base_model_id=base_id,
+                base_model_version=base_version,
+                base_model_checksum=base_checksum
             )
-            rm.open_round(req["round_id"])
-            print(json.dumps({"success": True, "round": rnd}, cls=EnhancedJSONEncoder))
+            rnd = rm.open_round(req["round_id"])
+            print(json.dumps({"success": True, "round": rnd, "base_model_source": base_source}, cls=EnhancedJSONEncoder))
+
+        elif action == "get_base_model":
+            from federation.base_models import base_model_dir, BASE_MODEL_FILES
+            rnd = storage.get_round(req["round_id"])
+            if not rnd or not rnd.base_model_id:
+                raise ValueError(f"Round {req['round_id']} has no base model.")
+            print(json.dumps({
+                "success": True, "base_model_id": rnd.base_model_id, "base_model_version": rnd.base_model_version,
+                "base_model_checksum": rnd.base_model_checksum,
+                "dir": base_model_dir(storage, rnd.base_model_id, rnd.base_model_version), "files": list(BASE_MODEL_FILES),
+            }))
 
         elif action == "aggregate":
             rm = RoundManager(storage)
@@ -236,7 +274,7 @@ def main():
                 rnd = storage.get_round(req["round_id"])
                 job_id = rnd.federation_job_id
             gm = agg.aggregate_round(job_id, req["round_id"])
-            print(json.dumps({"success": True, "global_model": gm}, cls=EnhancedJSONEncoder))
+            print(json.dumps({"success": True, "global_model": gm, "round": storage.get_round(req["round_id"])}, cls=EnhancedJSONEncoder))
 
 
         elif action == "list_global_models":

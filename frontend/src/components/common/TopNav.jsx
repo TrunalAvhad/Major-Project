@@ -1,26 +1,24 @@
-import React from 'react';
-import { useApp } from '../../context/AppContext';
-import {
-  Search,
-  Shield,
-  BookOpen,
-  Bell,
-  HelpCircle,
-  Lock,
-  ChevronDown,
-  RefreshCw,
-  Sliders
-} from 'lucide-react';
+import React, { useEffect } from 'react';
+import { useUiStore } from '../../stores/uiStore';
+import { useMockStore } from '../../stores/mockStore';
+import { useAuthStore, selectRole } from '../../stores/authStore';
+import { useFederationStore, currentRound } from '../../stores/federationStore';
+import { useRequestsStore } from '../../stores/requestsStore';
+import { statusBadge } from './Notice';
+import { Shield, BookOpen, Bell, Sliders } from 'lucide-react';
 
 export const TopNav = () => {
-  const {
-    activeScreen,
-    setActiveScreen,
-    privacyMetrics,
-    quorumStatus,
-    notificationsCount,
-    setActiveModal
-  } = useApp();
+  const setActiveScreen = useUiStore((s) => s.setActiveScreen);
+  const isAdmin = useAuthStore(selectRole) === 'admin';
+  const jobs = useFederationStore((s) => s.jobs.data);
+  const loadJobs = useFederationStore((s) => s.loadJobs);
+  const myRequests = useRequestsStore((s) => s.myRequests.data);
+  const loadMyRequests = useRequestsStore((s) => s.loadMyRequests);
+  const notificationsCount = useMockStore((s) => s.notificationsCount);
+
+  useEffect(() => { (isAdmin ? loadJobs : loadMyRequests)(); }, [isAdmin, loadJobs, loadMyRequests]);
+  const round = isAdmin ? currentRound(jobs) : null;
+  const openRequests = myRequests.filter((r) => ['OPEN', 'ACTIVE'].includes(r.status)).length;
 
   return (
     <header style={{
@@ -34,125 +32,35 @@ export const TopNav = () => {
       padding: '0 16px',
       zIndex: 10
     }}>
-      {/* Left Area: Consortium Select & Health Status */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-          background: 'var(--bg-nested)',
-          border: '1px solid var(--border-subtle)',
-          borderRadius: '4px',
-          padding: '4px 8px',
-          fontSize: '11px',
-          fontWeight: '600',
-          color: 'var(--text-secondary)'
-        }}>
-          <span style={{ color: '#60a5fa' }}>CONSORTIUM:</span>
-          <span style={{ color: 'var(--text-primary)' }}>Pan-Cancer Federated Trial</span>
-          <ChevronDown size={12} color="var(--text-muted)" />
-        </div>
-
-        {/* Live Cluster Pills */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <div className="badge badge-healthy" title="Infrastructure Uptime">
-            <span className="pulse-dot healthy" />
-            <span>Online 99.98%</span>
-          </div>
-          
-          <div className="badge badge-blue" title="Active Aggregation Algorithm">
-            <span>FedAvg {quorumStatus.fedAvgVersion}</span>
-          </div>
-
-          <div className="badge badge-cyan" title="Node Synchronicity">
-            <RefreshCw size={10} className="spin-slow" />
-            <span>Synced</span>
-          </div>
-
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            background: 'rgba(16, 185, 129, 0.08)',
-            border: '1px solid var(--status-healthy-border)',
-            borderRadius: '4px',
-            padding: '2px 6px',
-            fontSize: '11px',
-            color: 'var(--status-healthy)'
-          }}>
-            <Lock size={10} />
-            <span className="font-mono">8/8 TLS 1.3</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Center Search Bar */}
-      <div style={{ position: 'relative', width: '380px' }}>
-        <Search
-          size={14}
-          color="var(--text-muted)"
-          style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}
-        />
-        <input
-          type="text"
-          placeholder="Search experiments, models, rounds, hospital nodes... [/]"
-          style={{
-            width: '100%',
-            height: '30px',
-            background: 'var(--bg-nested)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: '5px',
-            padding: '0 32px 0 30px',
-            color: 'var(--text-primary)',
-            fontSize: '11px',
-            outline: 'none'
-          }}
-          onFocus={(e) => (e.target.style.borderColor = 'var(--brand-blue)')}
-          onBlur={(e) => (e.target.style.borderColor = 'var(--border-subtle)')}
-        />
-        <span style={{
-          position: 'absolute',
-          right: '8px',
-          top: '50%',
-          transform: 'translateY(-50%)',
-          background: '#1e293b',
-          border: '1px solid var(--border-subtle)',
-          borderRadius: '3px',
-          padding: '1px 5px',
-          fontSize: '9px',
-          color: 'var(--text-muted)',
-          fontFamily: 'var(--font-mono)'
-        }}>
-          ⌘K
-        </span>
+      {/* Left: current federation round (admin) or open training requests (researcher) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px' }}>
+        {isAdmin ? (
+          round ? (
+            <>
+              <span className={statusBadge(round.status)} title={round.round_id}>
+                {round.job.task} · round {round.round_number} · {round.status}
+              </span>
+              <span className="badge badge-neutral" title="Accepted updates / expected hospitals">
+                {round.accepted_participants.length}/{round.expected_participants.length} updates accepted
+              </span>
+            </>
+          ) : <span className="badge badge-neutral">No federation round</span>
+        ) : (
+          <span className="badge badge-neutral">
+            {openRequests} open training request{openRequests === 1 ? '' : 's'}
+          </span>
+        )}
       </div>
 
       {/* Right Controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        {/* Differential Privacy Metric Invariant Badge */}
-        <div 
-          onClick={() => setActiveScreen('security')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            background: 'rgba(6, 182, 212, 0.1)',
-            border: '1px solid rgba(6, 182, 212, 0.35)',
-            borderRadius: '4px',
-            padding: '4px 8px',
-            cursor: 'pointer',
-            fontSize: '11px',
-            color: 'var(--accent-teal)'
-          }}
-          title="Differential Privacy Bound: Click to inspect security & Rényi DP gauge"
-        >
-          <Shield size={12} />
-          <span style={{ fontWeight: '600' }} className="font-mono">DP: ε={privacyMetrics.epsilon} Active</span>
-        </div>
+        <span className="badge badge-neutral" title="Module 10 (differential privacy) is not implemented: model updates are sent without DP noise.">
+          <Shield size={11} /> Differential privacy: not enabled
+        </span>
 
         {/* Action Icons */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <button 
+          {!isAdmin && <button
             onClick={() => setActiveScreen('notifications')}
             style={{
               background: 'transparent',
@@ -163,7 +71,7 @@ export const TopNav = () => {
               borderRadius: '4px',
               position: 'relative'
             }}
-            title="Consortium Notifications"
+            title="Notifications (mock data: Module 18 not implemented)"
           >
             <Bell size={15} />
             {notificationsCount > 0 && (
@@ -177,9 +85,9 @@ export const TopNav = () => {
                 background: 'var(--status-danger)'
               }} />
             )}
-          </button>
+          </button>}
 
-          <button 
+          {isAdmin && <button
             onClick={() => setActiveScreen('audit')}
             style={{
               background: 'transparent',
@@ -189,10 +97,10 @@ export const TopNav = () => {
               padding: '6px',
               borderRadius: '4px'
             }}
-            title="Cryptographic Ledger Documentation"
+            title="Audit log"
           >
             <BookOpen size={15} />
-          </button>
+          </button>}
 
           <button 
             onClick={() => setActiveScreen('settings')}

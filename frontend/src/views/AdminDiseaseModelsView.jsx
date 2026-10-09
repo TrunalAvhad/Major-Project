@@ -1,50 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { apiService } from '../services/apiService';
+import { Notice } from '../components/common/Notice';
+import { useAdminStore } from '../stores/adminStore';
+
 import { ChevronDown, Database, Activity, Cpu, AlertTriangle, ShieldCheck, RefreshCw } from 'lucide-react';
 
 export const AdminDiseaseModelsView = () => {
-  const [diseases, setDiseases] = useState([]);
+  const { diseases: diseasesRes, reports, loadDiseases, loadReport } = useAdminStore();
+  const diseases = diseasesRes.data || [];
   const [selectedDisease, setSelectedDisease] = useState('');
-  const [reportData, setReportData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const report = reports[selectedDisease];
+  const reportData = report?.data || null;
+  const loading = !!selectedDisease && (!report || (report.status === 'loading' && !report.data));
+  const error = report?.error || null;
 
   // Fetch dynamic diseases list on mount
+  useEffect(() => { loadDiseases(); }, [loadDiseases]);
   useEffect(() => {
-    const loadDiseases = async () => {
-      try {
-        const list = await apiService.getDiseases();
-        setDiseases(list || ['Malaria', 'Pneumonia', 'COVID-19', 'Diabetic Retinopathy']);
-        if (list && list.length > 0) {
-          setSelectedDisease(list[0]);
-        }
-      } catch (err) {
-        setDiseases(['Malaria', 'Pneumonia', 'COVID-19', 'Diabetic Retinopathy']);
-        setSelectedDisease('Malaria');
-      }
-    };
-    loadDiseases();
-  }, []);
+    if (!selectedDisease && diseases.length > 0) setSelectedDisease(diseases[0]);
+  }, [diseases, selectedDisease]);
 
   // Fetch report when selectedDisease changes
   useEffect(() => {
-    if (!selectedDisease) return;
-
-    const loadReport = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const data = await apiService.getModelReport(selectedDisease);
-        setReportData(data);
-      } catch (err) {
-        setError(err.message || 'Failed to load report for ' + selectedDisease);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadReport();
-  }, [selectedDisease]);
+    if (selectedDisease) loadReport(selectedDisease);
+  }, [selectedDisease, loadReport]);
 
   const activeReports = reportData?.reports || [];
   const storedModels = reportData?.stored_models || [];
@@ -103,6 +81,11 @@ export const AdminDiseaseModelsView = () => {
           </div>
         </div>
       </div>
+
+      {diseasesRes.error && <Notice tone="error">{diseasesRes.error}</Notice>}
+      {diseasesRes.status === 'ready' && diseases.length === 0 && (
+        <Notice>No disease yet: diseases appear here once a researcher publishes a training request or a model is stored.</Notice>
+      )}
 
       {loading && (
         <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>

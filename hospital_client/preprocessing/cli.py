@@ -14,6 +14,7 @@ def main():
     preprocess_parser.add_argument("--mode", choices=["lazy", "materialized"], default="lazy", help="Output mode")
     preprocess_parser.add_argument("--target-column", default=None, help="Explicit tabular target/label column (required if Module 4 only reported candidate columns)")
     preprocess_parser.add_argument("--group-id-map", default=None, help="Path to a JSON {rel_path: group_id} file with real patient/group identifiers; enables GROUPED (patient-level) splitting so no group spans two splits")
+    preprocess_parser.add_argument("--generate-missing-splits", action="store_true", help="For an existing partial split (e.g. train/ and test/ only), carve the missing split(s) out of the existing train portion only; test data is never touched")
     preprocess_parser.add_argument("--invalid-split-policy", choices=["error", "regenerate"], default="error", help="What to do when an existing split fails validation (INVALID/AMBIGUOUS): stop (default) or regenerate")
 
     args = parser.parse_args()
@@ -30,6 +31,7 @@ def main():
             # silently stays STRATIFIED and patients can leak across splits.
             config.split.strategy = SplitStrategy.GROUPED
         config.split.invalid_split_policy = args.invalid_split_policy
+        config.split.generate_missing_splits_from_train = args.generate_missing_splits
         
         try:
             engine = PreprocessingEngine(config)

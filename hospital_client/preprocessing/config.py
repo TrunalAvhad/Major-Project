@@ -55,6 +55,10 @@ class SplitConfig:
     # rather than fabricated (see split_validation.py) - never set this from
     # a synthetic/fabricated group array.
     group_id_map_path: Optional[str] = None
+    # In-memory {rel_path: group_id}, set by the engine from the real lesion/patient id
+    # column of a metadata CSV (DatasetProfile.label_source). Used instead of
+    # group_id_map_path when set; never filled from fabricated ids.
+    group_id_map: Optional[Dict[str, str]] = None
     # Threshold (max-class-count / min-class-count) above which an existing
     # split's class distribution is flagged as severely imbalanced. This is
     # informational only and never invalidates a split by itself.

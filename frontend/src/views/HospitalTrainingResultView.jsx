@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useML } from '../context/MLContext';
+import { useMLStore } from '../stores/mlStore';
 import trainingService from '../services/trainingService';
 import TrainingResultModal from '../components/training/TrainingResultModal';
 import PrivacyNotice from '../components/common/PrivacyNotice';
@@ -10,22 +10,21 @@ const pct = (v) => (typeof v === 'number' ? `${(v * 100).toFixed(2)}%` : '-');
 const PLOT_TITLES = { 'confusion_matrix.png': 'Confusion matrix (test set)', 'roc_curves.png': 'ROC curves (one-vs-rest)', 'pr_curves.png': 'Precision-recall curves' };
 
 const TrainingResultView = () => {
-  const { lastRunId, trainingJob } = useML();
-  const [history, setHistory] = useState([]);
+  const lastRunId = useMLStore((s) => s.lastRunId);
+  const { data: history, error: historyError } = useMLStore((s) => s.runs);
+  const refreshRuns = useMLStore((s) => s.refreshRuns);
   const [selectedId, setSelectedId] = useState(lastRunId);
   const [run, setRun] = useState(null);
   const [plotUrls, setPlotUrls] = useState({});
   const [error, setError] = useState(null);
   const [showModal, setShowModal] = useState(false);
 
+  // The store refreshes the history itself when a training run finishes.
+  useEffect(() => { refreshRuns(); }, [refreshRuns]);
   useEffect(() => {
-    trainingService.getTrainingHistory()
-      .then((runs) => {
-        setHistory(runs);
-        setSelectedId((id) => id || runs[0]?.model_id || null);
-      })
-      .catch((e) => setError(e.message));
-  }, [trainingJob?.status]);
+    setSelectedId((id) => id || history[0]?.model_id || null);
+  }, [history]);
+  useEffect(() => { if (historyError) setError(historyError); }, [historyError]);
 
   useEffect(() => {
     if (!selectedId) return undefined;
@@ -166,17 +165,22 @@ const TrainingResultView = () => {
             </div>
           )}
 
-          {/* Module 9 Federation Handoff Card (engine itself is future work) */}
+          {/* Module 9 Federation Handoff Card */}
           <div style={{ padding: '14px', backgroundColor: '#0a1426', border: '1px solid rgba(37, 99, 235, 0.35)', borderRadius: 'var(--radius-md)', marginBottom: '14px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
               <div style={{ fontSize: '12px', fontWeight: 600, color: '#60a5fa', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Share2 size={14} /> Module 9 FederationHandoff {res.ready_for_federation ? 'Prepared' : 'Not Available'}
               </div>
-              <span className="badge badge-neutral font-mono" style={{ fontSize: '10px' }}>MODULE 9 ENGINE: PENDING</span>
+              <span className="badge badge-neutral font-mono" style={{ fontSize: '10px' }}>
+                {run.run?.round_id ? `ROUND ${run.run.round_id}` : 'LOCAL RUN'}
+              </span>
             </div>
             <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
               The best checkpoint's parameters and metadata are packaged locally as <code className="font-mono">{run.model_id}_federation_handoff</code>.
-              No raw images are included. Transmission and aggregation belong to the Flower-based Module 9, which is not implemented yet.
+              No raw images are included.{' '}
+              {run.run?.round_id
+                ? <>When training finishes it is submitted to round <code className="font-mono">{run.run.round_id}</code> of job <code className="font-mono">{run.run.job_id}</code>; its validation result and a retry button are under Federation Status.</>
+                : 'This was a local run, so it is not submitted to any federation round.'}
             </p>
             <div style={{ display: 'flex', gap: '16px', fontSize: '11px', color: 'var(--text-muted)' }}>
               <span>Training examples: <strong className="text-primary">{res.training_metrics?.sample_count ?? '-'}</strong></span>

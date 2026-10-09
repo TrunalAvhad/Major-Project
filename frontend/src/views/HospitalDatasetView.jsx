@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
-import { useML } from '../context/MLContext';
+import { useUiStore } from '../stores/uiStore';
+import { useMLStore } from '../stores/mlStore';
 import datasetService from '../services/datasetService';
 import PrivacyNotice from '../components/common/PrivacyNotice';
 import PipelineStatus from '../components/training/PipelineStatus';
+import MetadataLabelsPanel from '../components/dataset/MetadataLabelsPanel';
 import { DistributionBars, ReportText } from '../components/charts/MLCharts';
 import {
   Search,
@@ -19,11 +20,14 @@ import {
 } from 'lucide-react';
 
 const DatasetView = () => {
-  const { setActiveTab } = useApp();
-  const { activeDataset, datasets, selectDataset, pipeline, runPipeline, serviceStatus } = useML();
+  const setActiveTab = useUiStore((s) => s.setActiveScreen);
+  const { activeDataset, datasets, selectDataset, pipeline, runPipeline, serviceStatus } = useMLStore();
   const [folderInput, setFolderInput] = useState(activeDataset?.source_path || '');
   const [browseError, setBrowseError] = useState(null);
   const [browsing, setBrowsing] = useState(false);
+  // Labels from a metadata CSV instead of class folder names (null until the panel is complete).
+  const [useMetadataCsv, setUseMetadataCsv] = useState(false);
+  const [labelSource, setLabelSource] = useState(null);
 
   const handleBrowse = async () => {
     setBrowseError(null);
@@ -32,7 +36,7 @@ const DatasetView = () => {
       const path = await datasetService.browseFolder();
       if (path) {
         setFolderInput(path);
-        runPipeline(path);
+        if (!useMetadataCsv) runPipeline(path);  // with a metadata CSV, the columns are chosen first
       }
     } catch (err) {
       setBrowseError(err.message);
@@ -43,7 +47,7 @@ const DatasetView = () => {
 
   const handleScan = (e) => {
     e.preventDefault();
-    runPipeline(folderInput);
+    runPipeline(folderInput, useMetadataCsv ? labelSource : null);
   };
 
   const ds = activeDataset;
@@ -63,7 +67,8 @@ const DatasetView = () => {
           <span>Locate Local Dataset (Module 4 Ingestion)</span>
         </div>
         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
-          Locate an image folder (class sub-folders, optional train/val/test) or a CSV/XLS/XLSX file on this workstation.
+          Locate an image folder (class sub-folders, optional train/val/test - a missing validation split is carved from train)
+          or a CSV/XLS/XLSX file on this workstation. Images without class folders can take their labels from a metadata CSV.
           Inspection (Module 4), preprocessing (Module 5) and hardware-aware training recommendations (Module 8) then run
           automatically on this machine. The dataset is only read - never modified, copied off this machine, or uploaded.
         </p>
@@ -100,7 +105,7 @@ const DatasetView = () => {
           </div>
           <button
             type="submit"
-            disabled={busy || !folderInput.trim()}
+            disabled={busy || !folderInput.trim() || (useMetadataCsv && !labelSource)}
             className="btn btn-teal"
             style={{ padding: '0 16px' }}
           >
@@ -108,6 +113,12 @@ const DatasetView = () => {
             {pipeline.running ? 'Pipeline Running...' : 'Run Local Pipeline'}
           </button>
         </form>
+
+        <label style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+          <input type="checkbox" checked={useMetadataCsv} disabled={busy} onChange={(e) => setUseMetadataCsv(e.target.checked)} />
+          Labels come from a metadata CSV (images are not sorted into class folders, e.g. ISIC)
+        </label>
+        {useMetadataCsv && <MetadataLabelsPanel onChange={setLabelSource} disabled={busy} />}
 
         {browseError && (
           <div style={{
@@ -209,7 +220,9 @@ const DatasetView = () => {
                 </div>
               )}
               <div style={{ marginTop: '14px', padding: '8px 10px', backgroundColor: '#0a101d', borderRadius: 'var(--radius-sm)', fontSize: '11px', color: 'var(--text-secondary)' }}>
-                Patient-level isolation requires real patient/group ids: provide a group-id map in the Preprocessing Engine.
+                {p.label_source?.group_column
+                  ? <>Lesion/patient-level split: images sharing a <code className="font-mono">{p.label_source.group_column}</code> value stay in one split.</>
+                  : 'Patient-level isolation requires real patient/group ids: a group column in the metadata CSV, or a group-id map in the Preprocessing Engine.'}
               </div>
             </div>
 
@@ -221,6 +234,28 @@ const DatasetView = () => {
               <DistributionBars distribution={p.class_distribution} />
             </div>
           </div>
+
+          {p.label_source && (
+            <div className="card">
+              <div className="card-title">
+                <Database size={15} color="var(--accent-teal)" />
+                <span>Labels From Metadata CSV</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', fontSize: '12px' }}>
+                {[
+                  ['CSV', p.label_source.csv_path],
+                  ['Image / label / group column', `${p.label_source.image_column} / ${p.label_source.label_column} / ${p.label_source.group_column || '-'}`],
+                  ['Labelled images', p.label_source.summary.labelled_images],
+                  ['Images without a label (not used)', p.label_source.summary.images_without_label],
+                  ['Images excluded by the class mapping', p.label_source.summary.images_excluded_by_label_map],
+                  ['CSV rows with no matching image', p.label_source.summary.rows_without_matching_image],
+                  ...(p.label_source.group_column ? [['Lesions / patients', p.label_source.summary.groups]] : []),
+                ].map(([k, v]) => (
+                  <div key={k}><span className="text-muted">{k}:</span><div className="font-mono text-primary" style={{ wordBreak: 'break-all' }}>{String(v)}</div></div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Image & Tabular Statistics */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>

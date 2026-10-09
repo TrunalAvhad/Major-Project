@@ -1,12 +1,12 @@
 import React from 'react';
 
 /** Per-epoch curves from the trainer's "[epoch i/n] ..." lines (real values only). */
-export const EpochLineChart = ({ epochs, series, height = 180, yMax }) => {
+export const EpochLineChart = ({ epochs, series, height = 180, yMax, xLabel = 'epoch', emptyText = 'Waiting for the first completed epoch...' }) => {
   const width = 520;
   const pad = { l: 40, r: 12, t: 10, b: 24 };
   const points = epochs || [];
   if (points.length === 0) {
-    return <div className="text-muted" style={{ fontSize: '11px', padding: '20px', textAlign: 'center' }}>Waiting for the first completed epoch...</div>;
+    return <div className="text-muted" style={{ fontSize: '11px', padding: '20px', textAlign: 'center' }}>{emptyText}</div>;
   }
   const values = series.flatMap((s) => points.map((p) => p[s.key]).filter((v) => typeof v === 'number'));
   const top = yMax ?? Math.max(...values, 0.0001) * 1.1;
@@ -44,7 +44,7 @@ export const EpochLineChart = ({ epochs, series, height = 180, yMax }) => {
             <span style={{ width: '10px', height: '3px', backgroundColor: s.color, display: 'inline-block' }} /> {s.label}
           </span>
         ))}
-        <span className="text-muted">x: epoch</span>
+        <span className="text-muted">x: {xLabel}</span>
       </div>
     </div>
   );

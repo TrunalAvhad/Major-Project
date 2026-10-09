@@ -1,39 +1,11 @@
 /**
- * Module 18: Consortium Communication & Notifications Service Adapter
- * 
- * Manages hospital-side participation alerts, federated round notifications,
- * and encrypted telemetry/dispatch notices with the Researcher platform.
+ * Module 18: notifications are real (backend /notifications, pushed live over Socket.io);
+ * operator messages are still MOCK demo content.
  */
+import authService from './authService';
 
-const INITIAL_NOTIFICATIONS = [
-  {
-    id: 'NOTIF-001',
-    title: 'Federated Round #4 Invitation',
-    sender: 'Lead Researcher (Consortium Central)',
-    type: 'ROUND_INVITE',
-    timestamp: '15 minutes ago',
-    read: false,
-    content: 'Round #4 aggregation protocol initialized. Target architecture: ResNet-18. Local minimum epoch requirement: 5. Please execute local training when hardware is idle.'
-  },
-  {
-    id: 'NOTIF-002',
-    title: 'Global Aggregated Model v2.1 Released',
-    sender: 'Central FL Server (Module 9)',
-    type: 'MODEL_RELEASE',
-    timestamp: '2 hours ago',
-    read: true,
-    content: 'Federated round #3 global model checkpoints successfully verified by Merkle proof and Byzantine consensus. Now available in Local Models for clinical evaluation.'
-  },
-  {
-    id: 'NOTIF-003',
-    title: 'Security Health & Audit Ping',
-    sender: 'System Sentinel (Module 11/13)',
-    type: 'SECURITY_PING',
-    timestamp: '1 day ago',
-    read: true,
-    content: 'Zero-raw-data boundary audit verified: 0 external raw image leaks detected over 30-day operating window.'
-  }
-];
+const API_BASE_URL = import.meta.env?.VITE_API_URL || 'http://localhost:5000/api/v1';
+const authHeaders = () => ({ Authorization: `Bearer ${authService.getToken()}` });
 
 const INITIAL_MESSAGES = [
   {
@@ -53,9 +25,19 @@ const INITIAL_MESSAGES = [
 ];
 
 class CommunicationService {
+  /** Real (backend): this hospital's notifications, newest first. */
   async getNotifications() {
-    return [...INITIAL_NOTIFICATIONS];
+    const res = await fetch(`${API_BASE_URL}/notifications`, { headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data?.error?.message || data?.error || 'Failed to load notifications');
+    return data.notifications;
   }
+
+  async markNotificationsRead() {
+    await fetch(`${API_BASE_URL}/notifications/read`, { method: 'POST', headers: authHeaders() });
+  }
+
+  /** MOCK: messages below are built-in demo content until a messaging API exists. */
 
   async getMessages() {
     return [...INITIAL_MESSAGES];

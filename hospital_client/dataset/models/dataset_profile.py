@@ -29,9 +29,13 @@ class DatasetProfile:
     errors: List[str] = field(default_factory=list)
     
     generated_at: str = ""
+
+    # Image datasets labelled from a metadata CSV: the CSV path, columns, label map
+    # and match counts (see ingestion/metadata_labels.py). Empty for folder labels.
+    label_source: Dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> dict:
-        return {
+        d = {
             "dataset_type": self.dataset_type,
             "source_path": self.source_path,
             "total_samples": self.total_samples,
@@ -49,4 +53,7 @@ class DatasetProfile:
             "errors": self.errors,
             "generated_at": self.generated_at
         }
+        if self.label_source:  # only present for metadata-CSV labelled image datasets
+            d["label_source"] = self.label_source
+        return d
 

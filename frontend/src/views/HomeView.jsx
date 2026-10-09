@@ -1,9 +1,9 @@
 import React from 'react';
-import { useApp } from '../context/AppContext';
+import { useUiStore } from '../stores/uiStore';
 import { Shield, Lock, Stethoscope, Microscope, LogIn, UserPlus, FileCheck, Building2 } from 'lucide-react';
 
 export const HomeView = () => {
-  const { setActiveScreen } = useApp();
+  const setActiveScreen = useUiStore((s) => s.setActiveScreen);
 
   return (
     <div style={{
@@ -65,7 +65,7 @@ export const HomeView = () => {
           maxWidth: '540px',
           margin: '0 auto 32px auto'
         }}>
-          Decentralized medical imaging model training across clinical ring nodes.
+          Federated deep learning for medical imaging: hospitals train locally, a central server aggregates the model updates.
           Protected patient records and raw imaging datasets strictly remain within hospital boundaries.
         </p>
 

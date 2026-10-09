@@ -1,0 +1,121 @@
+import { create } from 'zustand';
+import * as federation from '../services/federationService';
+import ml from '../services/mlClient';
+import authService from '../services/authService';
+import { emptyResource, loadResource, unwrap } from './resource';
+import { useMLStore } from './mlStore';
+
+const API_URL = import.meta.env?.VITE_API_URL || 'http://localhost:5000/api/v1';
+
+/** Module 9 federation state: jobs/rounds, global models and this hospital's submissions. */
+const initial = {
+  jobs: emptyResource([]),
+  architectures: emptyResource([]),
+  globalModels: emptyResource([]),
+  hospitalUpdates: emptyResource([]),   // the signed-in hospital's own submissions
+  jobDetails: emptyResource([]),        // admin: every job with its rounds and submitted updates
+  taskVocabulary: [],
+  hospitalNames: {},                    // admin: hospital_id -> name for round participants
+};
+
+export const useFederationStore = create((set, get) => ({
+  ...initial,
+  session: 0,
+  reset: () => set((s) => ({ ...initial, session: s.session + 1 })),
+
+  loadJobs: () => loadResource(set, get, 'jobs', async () => {
+    const res = await federation.getJobs();
+    set({ hospitalNames: res.hospital_names || {} });
+    return unwrap(res, 'jobs');
+  }),
+  loadArchitectures: () => loadResource(set, get, 'architectures',
+    async () => unwrap(await federation.getArchitectures(), 'architectures')),
+  loadGlobalModels: () => loadResource(set, get, 'globalModels',
+    async () => unwrap(await federation.getGlobalModels(), 'models') || []),
+  loadHospitalUpdates: () => loadResource(set, get, 'hospitalUpdates',
+    async () => unwrap(await federation.getHospitalFederationStatus(), 'updates') || []),
+
+  /** One request per job (the list endpoint has no updates); fine for the handful of jobs a demo has. */
+  loadJobDetails: () => loadResource(set, get, 'jobDetails', async () => {
+    const jobs = unwrap(await federation.getJobs(), 'jobs') || [];
+    return Promise.all(jobs.map(async (j) => unwrap(await federation.getJobDetails(j.federation_job_id), 'job')));
+  }),
+
+  loadTaskVocabulary: async () => {
+    const session = get().session;
+    const { tasks } = await ml.get('/federation/task-vocabulary').catch(() => ({ tasks: [] }));
+    if (get().session === session) set({ taskVocabulary: tasks || [] });
+  },
+
+  // Admin actions: each refreshes the list it changed.
+  createJob: async (job) => { await federation.createJob(job); await get().loadJobs(); },
+  createRound: async (round) => { const res = await federation.createRound(round); await get().loadJobs(); return res; },
+  aggregateRound: async (jobId, roundId, forceClose) => {
+    const res = await federation.aggregateRound(jobId, roundId, forceClose);
+    await get().loadJobs();
+    return res;
+  },
+  deleteJob: async (jobId) => { await federation.deleteJob(jobId); await get().loadJobs(); },
+  deleteRound: async (roundId) => { await federation.deleteRound(roundId); await get().loadJobs(); },
+  evaluateModel: async (id) => { await federation.evaluateModel(id); await get().loadGlobalModels(); },
+  promoteModel: async (id, evalId) => { await federation.promoteModel(id, evalId); await get().loadGlobalModels(); },
+
+  /**
+   * Hospital joins an open round: registers with M9, then the local ML service trains
+   * (and submits the handoff when done). The job is followed by the Training Monitor.
+   */
+  participate: async (job, round, datasetId) => {
+    if (!round) throw new Error('No active round available for participation.');
+    await federation.registerParticipant(job.federation_job_id, round.round_id);
+    const trainingJob = await ml.post('/federation/participate', {
+      job,
+      dataset_id: datasetId,
+      round_id: round.round_id,
+      auth_token: authService.getToken(),
+      api_url: API_URL,
+    });
+    useMLStore.getState().trackTrainingJob(trainingJob);
+    return trainingJob;
+  },
+}));
+
+// ── Derived views of Module 9 data (pure functions, shared by the admin screens) ──
+
+export const COLLECTING = ['OPEN', 'RECEIVING', 'READY_FOR_AGGREGATION'];
+
+/** Every round of every job, newest first, each with its job attached. */
+export const allRounds = (jobs) => jobs
+  .flatMap((job) => (job.rounds || []).map((round) => ({ ...round, job })))
+  .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+
+/** The newest round still collecting hospital updates, else the newest round. */
+export const currentRound = (jobs) => {
+  const rounds = allRounds(jobs);
+  return rounds.find((r) => COLLECTING.includes(r.status)) || rounds[0] || null;
+};
+
+/** Latest completed evaluation of a global model, if any. */
+export const latestEvaluation = (model) => (model.evaluations || [])
+  .filter((e) => e.status === 'COMPLETED' || e.accuracy != null)
+  .sort((a, b) => String(b.completed_at || b.started_at).localeCompare(String(a.completed_at || a.started_at)))[0] || null;
+
+/** Lifecycle events (job created, round opened/closed/aggregated, model created/evaluated/promoted), newest first. */
+export const federationTimeline = (jobs, models) => {
+  const events = [];
+  const add = (time, title, detail) => time && events.push({ time, title, detail });
+  jobs.forEach((j) => {
+    add(j.created_at, `Job created: ${j.task}`, `${j.architecture} · ${j.federation_job_id}`);
+    (j.rounds || []).forEach((r) => {
+      const label = `${j.task} round ${r.round_number}`;
+      add(r.opened_at, `Round opened: ${label}`, `${r.expected_participants.length} expected hospital(s)`);
+      add(r.aggregation_completed_at, `Round aggregated: ${label}`, `${r.accepted_participants.length} update(s) aggregated`);
+      add(r.closed_at, `Round closed: ${label}`, `Status ${r.status}`);
+    });
+  });
+  models.forEach((m) => {
+    add(m.created_at, `Global model v${m.version} created`, `${m.task} · ${m.architecture} · ${m.aggregation_method}`);
+    (m.evaluations || []).forEach((e) => add(e.completed_at, `Global model v${m.version} evaluated`,
+      `accuracy ${e.accuracy != null ? (e.accuracy * 100).toFixed(1) + '%' : '-'} on ${e.sample_count} samples`));
+  });
+  return events.sort((a, b) => String(b.time).localeCompare(String(a.time)));
+};

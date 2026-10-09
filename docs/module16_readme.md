@@ -1,5 +1,17 @@
 # Module 16: Local Inference
 
+## At a glance
+- **Job:** predict the class of one new local image with an explicitly chosen model version.
+- **How:**
+  1. load the checkpoint through Module 6 (hash and shape checks);
+  2. validate the image with Module 4's checks;
+  3. preprocess it with the same deterministic transform Module 7 used for validation/test;
+  4. run a forward pass in `torch.inference_mode`;
+  5. softmax gives probabilities, and the stored class mapping gives the class name.
+- **Privacy:** the image is never uploaded, copied or written. The package has no network code.
+- **Output:** predicted class, probabilities, model id/version. A model prediction, not a diagnosis.
+- **Plain-language guide:** [README.md](README.md) section 5.6.
+
 ## 1. Purpose
 
 Module 16 runs an approved model on a **new local medical image, entirely on the hospital

@@ -1,86 +1,57 @@
-import React, { useState, useEffect } from 'react';
-import { useApp } from '../context/AppContext';
-import { getHospitalFederationStatus, getJobs } from '../services/federationService';
-import { ML_API_URL, ml } from '../services/mlClient';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useUiStore } from '../stores/uiStore';
+import { useMLStore } from '../stores/mlStore';
+import { useFederationStore } from '../stores/federationStore';
+import { ml } from '../services/mlClient';
+import FederatedTrainingConfirmModal from '../components/training/FederatedTrainingConfirmModal';
 import {
   Network, CheckCircle, XCircle, Clock, AlertTriangle, RefreshCw,
   ShieldCheck, Upload, Ban, Tag, Database
 } from 'lucide-react';
 
 const HospitalFederationView = () => {
-  const { hospitalName } = useApp();
-  const [updates, setUpdates] = useState([]);
-  const [localHandoffs, setLocalHandoffs] = useState([]);
-  const [availableJobs, setAvailableJobs] = useState([]);
-  const [localDatasets, setLocalDatasets] = useState([]);
+  const setActiveTab = useUiStore((s) => s.setActiveScreen);
+  const { datasets, refreshDatasets, refreshRuns } = useMLStore();
+  const runs = useMLStore((s) => s.runs.data);
+  const {
+    jobs, hospitalUpdates, taskVocabulary, loadJobs, loadHospitalUpdates, loadTaskVocabulary, participate,
+  } = useFederationStore();
+  const updates = hospitalUpdates.data;
+  const availableJobs = jobs.data;
+  // Page-local UI state: { job, round } while the participation confirm modal is open, etc.
+  const [pendingJoin, setPendingJoin] = useState(null);
+  const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState(null);
   const [selectedDatasetId, setSelectedDatasetId] = useState('');
   const [eligibilityResults, setEligibilityResults] = useState({});
-  const [loading, setLoading] = useState(true);
   const [evaluating, setEvaluating] = useState(false);
-  const [error, setError] = useState(null);
-  const [taskVocabulary, setTaskVocabulary] = useState([]);
   const [settingTask, setSettingTask] = useState(false);
+  const [retry, setRetry] = useState(null);       // { id: model being resubmitted, error }
+  const [taskError, setTaskError] = useState(null);
 
   /* ── Helpers ────────────────────────────────────────────── */
 
+  const loading = [jobs, hospitalUpdates].some((r) => r.status === 'idle' || r.status === 'loading');
+  const error = hospitalUpdates.error || jobs.error;
+  const localDatasets = useMemo(() => datasets.filter((d) => d.preprocessed === true), [datasets]);
   const selectedDataset = localDatasets.find(d => d.dataset_id === selectedDatasetId);
 
-  const loadStatus = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [res, jobsRes, datasetsRes, vocabRes, runsRes] = await Promise.all([
-        getHospitalFederationStatus(),
-        getJobs(),
-        ml.get('/datasets'),
-        ml.get('/federation/task-vocabulary').catch(() => ({ tasks: [] })),
-        ml.get('/training-runs').catch(() => ({ runs: [] }))
-      ]);
-      if (res.success) {
-        setUpdates(res.updates || []);
-        
-        // Find unsubmitted handoffs
-        const allUpdates = res.updates || [];
-        const runs = runsRes.runs || [];
-        const unsubmitted = [];
-        
-        for (const run of runs) {
-            if (run.status === 'TRAINING_COMPLETED_AWAITING_FEDERATION' && run.ready_for_federation) {
-                // If it's not in updates (by checking if the model_id matches somehow)
-                // Actually we can just check if any update has a round that matches the job's active round for this handoff.
-                // Wait, M9 updates don't store local model_id. But they store training_configuration.model_id!
-                // Let's assume if it's not in updates, we can show it.
-                const isSubmitted = allUpdates.some(u => 
-                    u.training_configuration && u.training_configuration.model_id === run.model_id
-                );
-                if (!isSubmitted) {
-                    unsubmitted.push(run);
-                }
-            }
-        }
-        setLocalHandoffs(unsubmitted);
-      } else {
-        setError(res.error || 'Failed to load federation status');
-      }
-      if (jobsRes.success) {
-        setAvailableJobs(jobsRes.jobs || []);
-      }
-      if (datasetsRes.datasets) {
-        const preprocessed = datasetsRes.datasets.filter(d => d.preprocessed === true);
-        setLocalDatasets(preprocessed);
-        if (preprocessed.length > 0 && !selectedDatasetId) {
-          setSelectedDatasetId(preprocessed[0].dataset_id);
-        }
-      }
-      setTaskVocabulary(vocabRes.tasks || []);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Completed federation runs whose handoff never reached M9 (matched via the
+  // update's training_configuration.model_id, the local run id).
+  const localHandoffs = useMemo(() => runs.filter((run) =>
+    run.status === 'TRAINING_COMPLETED_AWAITING_FEDERATION' && run.ready_for_federation
+    && !updates.some((u) => u.training_configuration?.model_id === run.model_id)
+  ), [runs, updates]);
+
+  const loadStatus = () => Promise.all([
+    loadHospitalUpdates(), loadJobs(), refreshDatasets(), loadTaskVocabulary(), refreshRuns(),
+  ]);
 
   useEffect(() => { loadStatus(); }, []);
+
+  useEffect(() => {
+    if (!selectedDatasetId && localDatasets.length > 0) setSelectedDatasetId(localDatasets[0].dataset_id);
+  }, [localDatasets, selectedDatasetId]);
 
   /* ── Eligibility evaluation (read-only, no mutations) ── */
 
@@ -117,18 +88,14 @@ const HospitalFederationView = () => {
   const handleSetTask = async (task) => {
     if (!selectedDatasetId) return;
     setSettingTask(true);
+    setTaskError(null);
     try {
       await ml.post(`/datasets/${selectedDatasetId}/set-task`, { declared_task: task });
-      // Refresh datasets to pick up the new declared_task
-      const datasetsRes = await ml.get('/datasets');
-      if (datasetsRes.datasets) {
-        const preprocessed = datasetsRes.datasets.filter(d => d.preprocessed === true);
-        setLocalDatasets(preprocessed);
-      }
+      await refreshDatasets(); // picks up the new declared_task
       // Re-evaluate eligibility with updated task
       setTimeout(() => evaluateEligibility(), 200);
     } catch (err) {
-      alert('Failed to set task: ' + err.message);
+      setTaskError(err.message);
     } finally {
       setSettingTask(false);
     }
@@ -136,55 +103,36 @@ const HospitalFederationView = () => {
 
   /* ── Participate ───────────────────────────────────────── */
 
-  const handleParticipate = async (job) => {
-    if (!window.confirm(`Start federation run for job ${job.federation_job_id}?`)) return;
+  const handleParticipate = (job) => {
+    setJoinError(null);
+    setPendingJoin({ job, round: job.rounds?.find(r => r.status === 'OPEN' || r.status === 'RECEIVING') });
+  };
+
+  const confirmParticipate = async () => {
+    const { job, round } = pendingJoin;
+    setJoining(true);
+    setJoinError(null);
     try {
-      const activeRound = job.rounds?.find(r => r.status === 'OPEN' || r.status === 'RECEIVING');
-      if (!activeRound) throw new Error("No active round available for participation.");
-      
-      // Register with M9 first
-      const { registerParticipant } = await import('../services/federationService');
-      await registerParticipant(job.federation_job_id, activeRound.round_id);
-
-      const token = localStorage.getItem('medfl_researcher_token') || sessionStorage.getItem('medfl_researcher_token');
-      const api_url = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) ? import.meta.env.VITE_API_URL : 'http://localhost:5000/api/v1';
-
-      await ml.post('/federation/participate', { 
-        job, 
-        dataset_id: selectedDatasetId,
-        round_id: activeRound.round_id,
-        auth_token: token,
-        api_url: api_url
-      });
-      alert("Federation run started successfully!");
-      loadStatus();
+      // Registers with M9, starts local training and hands the job to the Training Monitor.
+      await participate(job, round, selectedDatasetId);
+      setPendingJoin(null);
+      setActiveTab('training_monitor');
     } catch (err) {
-      alert("Error: " + err.message);
+      setJoinError(err.message);  // e.g. another training run already in progress
+    } finally {
+      setJoining(false);
     }
   };
 
+  // Resubmits a finished run to the job/round saved in its run.json (local ML API knows the handoff folder).
   const handleRetrySubmission = async (run) => {
+    setRetry({ id: run.model_id, error: null });
     try {
-        const jobId = prompt("Enter the Federation Job ID for this handoff (e.g. JOB_MAL_MNV3S_CLS2_1):");
-        if (!jobId) return;
-        const roundId = prompt("Enter the Round ID for this handoff (e.g. ROUND_MAL_MNV3S_R1):");
-        if (!roundId) return;
-
-        const { submitHandoff, registerParticipant } = await import('../services/federationService');
-        await registerParticipant(jobId, roundId);
-        
-        // handoff dir is typically `trained/{model_id}_federation_handoff`
-        // But the backend is on the same machine, so we can just pass the path.
-        // Wait, the python server knows TRAINED_DIR. In the frontend we don't know the absolute path.
-        // We will pass the model_id to a new ML endpoint to submit it, OR we can construct the path if we assume C:\Users\SHUBHAM\medfl_ml_work\trained
-        // To be safe, let's call a new endpoint in local ml API or just guess the path.
-        const handoffDir = `C:\\Users\\SHUBHAM\\medfl_ml_work\\trained\\${run.model_id}_federation_handoff`;
-        
-        await submitHandoff(jobId, roundId, handoffDir);
-        alert("Handoff submitted successfully!");
-        loadStatus();
+      await ml.post(`/federation/submit/${encodeURIComponent(run.model_id)}`, {});
+      setRetry(null);
+      loadStatus();
     } catch (err) {
-        alert("Failed to submit handoff: " + err.message);
+      setRetry({ id: null, error: `${run.model_id}: ${err.message}` });
     }
   };
 
@@ -288,11 +236,14 @@ const HospitalFederationView = () => {
                 <div style={{ fontSize: '11px', color: '#cbd5e1', marginBottom: '12px' }}>
                   Network or submission failure. Retry available.
                 </div>
-                <button className="btn btn-primary" onClick={() => handleRetrySubmission(run)}>
-                  Retry Submission
+                <button className="btn btn-primary" disabled={retry?.id === run.model_id} onClick={() => handleRetrySubmission(run)}>
+                  {retry?.id === run.model_id ? 'Submitting...' : 'Retry Submission'}
                 </button>
               </div>
             ))}
+
+            {retry?.error && <div style={{ fontSize: '11px', color: 'var(--status-danger)', margin: '0 0 12px' }}>{retry.error}</div>}
+            {taskError && <div style={{ fontSize: '11px', color: 'var(--status-danger)', margin: '0 0 12px' }}>Failed to set task: {taskError}</div>}
 
             {updates.length === 0 && localHandoffs.length === 0 ? (
               <div className="card" style={{ padding: '40px', textAlign: 'center' }}>
@@ -598,6 +549,18 @@ const HospitalFederationView = () => {
           </div>
         </div>
       )}
+
+      <FederatedTrainingConfirmModal
+        isOpen={!!pendingJoin}
+        onClose={() => setPendingJoin(null)}
+        onConfirm={confirmParticipate}
+        job={pendingJoin?.job}
+        round={pendingJoin?.round}
+        datasetName={selectedDataset?.name}
+        eligibility={pendingJoin && eligibilityResults[pendingJoin.job.federation_job_id]}
+        starting={joining}
+        error={joinError}
+      />
     </div>
   );
 };

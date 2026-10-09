@@ -7,6 +7,7 @@ const authRoutes = require('./authentication/routes/authRoutes');
 const adminRoutes = require('./authentication/routes/adminRoutes');
 const trainingRequestRoutes = require('./routes/trainingRequestRoutes');
 const federationRoutes = require('./routes/federationRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/training-requests', trainingRequestRoutes);
 app.use('/api/v1/federation', federationRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
 
 // Error Handling Middleware (catch all)
 app.use((err, req, res, next) => {

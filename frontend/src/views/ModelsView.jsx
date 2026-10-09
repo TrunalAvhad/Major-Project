@@ -1,419 +1,185 @@
-import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
-import { RadarChart } from '../components/charts/RadarChart';
-import {
-  Cpu,
-  Layers,
-  Shield,
-  Download,
-  Plus,
-  ArrowLeftRight,
-  CheckCircle,
-  ExternalLink,
-  Zap,
-  Lock,
-  Play
-} from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { useAuthStore, selectRole } from '../stores/authStore';
+import { useUiStore } from '../stores/uiStore';
+import { useAdminStore } from '../stores/adminStore';
+import { useFederationStore, latestEvaluation } from '../stores/federationStore';
+import { ConfusionMatrixGrid } from '../components/charts/MLCharts';
+import { Notice, Empty, fmtDate, pct, statusBadge } from '../components/common/Notice';
+import { Cpu, RefreshCw, ChevronRight } from 'lucide-react';
 
+/** Class names in index order from a Module 9 class_mapping {name: index}. */
+const classOrder = (mapping) => (mapping && typeof mapping === 'object'
+  ? Object.entries(mapping).sort((a, b) => a[1] - b[1]).map(([name]) => name) : null);
+
+/**
+ * Model registry: Module 9 global model versions with their evaluations, the backend's
+ * stored-model records and the Module 6 architecture catalog. These endpoints are admin-only.
+ */
 export const ModelsView = () => {
-  const { setActiveScreen, setActiveModal } = useApp();
-  const [activeTab, setActiveTab] = useState('all');
-  const [compareSelection, setCompareSelection] = useState({ effnet: true, resnet: true });
+  const isAdmin = useAuthStore(selectRole) === 'admin';
+  if (!isAdmin) {
+    return (
+      <div style={{ padding: '16px 20px' }}>
+        <Notice>
+          Global model versions, evaluations and the architecture catalog are served by admin-only endpoints
+          (<span className="font-mono">/federation/models</span>, <span className="font-mono">/federation/architectures</span>).
+          Ask a consortium admin for model results; your own requests' hospital progress is on the Training page.
+        </Notice>
+      </div>
+    );
+  }
+  return <AdminModels />;
+};
 
-  const models = [
-    {
-      id: 'effnet-b0',
-      name: 'EfficientNet-B0-FL v2.4',
-      badge: 'DEPLOYABLE',
-      sha: '0x8a92...fc10',
-      task: 'Chest CT Pulmo Segmentation & Nodule Classification',
-      backbone: 'EffNet-B0 + 3D UNet',
-      params: '5.3M',
-      flScheme: 'FedAvg (Momentum)',
-      dpNoise: 'σ=0.85 (ε=1.24)',
-      dice: '91.4%',
-      f1: '0.926',
-      auc: '0.9782',
-      loss: '0.1412',
-      roundInfo: 'Round 14 of 20 (Converging smoothly)',
-      dataset: '8 Nodes • 13,990 Scans',
-      status: 'production',
-      isPrimary: true
-    },
-    {
-      id: 'resnet-50',
-      name: 'ResNet-50-FL v1.9',
-      badge: 'mTLS CERTIFIED',
-      sha: '0x3fe1...99bc',
-      task: 'Multi-Class Brain MRI Glioma Grading',
-      backbone: 'ResNet-50 + MedHead',
-      params: '25.6M',
-      flScheme: 'FedProx (μ=0.01)',
-      dpNoise: 'σ=0.90 (ε=1.12)',
-      accuracy: '91.20%',
-      f1: '0.904',
-      auc: '0.9610',
-      loss: '0.1840',
-      roundInfo: 'Round 25 of 30 (Epoch Sync Phase)',
-      dataset: '6 Enclaves • 8,420 Volumes',
-      status: 'staging'
-    },
-    {
-      id: 'swin-unetr',
-      name: 'Swin-UNETR-FL v1.8',
-      badge: 'ARCHIVED REFERENCE',
-      sha: '0x7ca1...02fa',
-      task: '3D Abdominal Organ Multi-Organ Segmentation',
-      backbone: 'Swin Vision Transformer',
-      params: '62.2M',
-      flScheme: 'FedAvg',
-      dpNoise: 'ε=1.45',
-      dice: '88.7%',
-      f1: '0.881',
-      auc: '0.9420',
-      loss: '0.2190',
-      roundInfo: 'Converged (Run Terminal Status)',
-      dataset: '5 Enclaves • 5,800 Volumes',
-      status: 'archival'
-    },
-    {
-      id: 'densenet-121',
-      name: 'DenseNet-121-FL v0.8',
-      badge: 'QUORUM DEFICIT',
-      sha: '0x12b4...88dc',
-      task: 'Pediatric Chest Radiograph Pneumonia Detection',
-      backbone: 'DenseNet-121',
-      params: '7.9M',
-      flScheme: 'Multi-Krum Byz.',
-      dpNoise: 'ε=0.98',
-      accuracy: '89.65%',
-      f1: '0.892',
-      auc: '0.9540',
-      loss: '0.2450',
-      roundInfo: 'Node 03 (St. Jude) dropped offline',
-      dataset: 'Waiting for 4/5 consensus',
-      status: 'paused'
-    }
-  ];
+const AdminModels = () => {
+  const setActiveScreen = useUiStore((s) => s.setActiveScreen);
+  const { globalModels, architectures, loadGlobalModels, loadArchitectures } = useFederationStore();
+  const { storedModels, loadStoredModels } = useAdminStore();
+  const [selectedId, setSelectedId] = useState(null);
+
+  const reload = () => { loadGlobalModels(); loadArchitectures(); loadStoredModels(); };
+  useEffect(reload, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const models = [...globalModels.data].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const selected = models.find((m) => m.global_model_id === selectedId) || models[0];
+  const evaluation = selected && latestEvaluation(selected);
+  const loading = [globalModels, architectures, storedModels].some((r) => r.status === 'loading');
 
   return (
     <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-      {/* Top Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-            <h1 style={{ fontSize: '20px', fontWeight: '700' }}>
-              Global Federated Model Registry &amp; Architectures
-            </h1>
-            <span className="badge badge-blue font-mono" style={{ fontSize: '9px' }}>v4.1-STABLE</span>
-          </div>
-          <p style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-            Task-Specific Neural Architectures • FedAvg/FedProx Aggregated Checkpoints • Cryptographic Checksums &amp; Staging
+          <h1 style={{ fontSize: '18px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Cpu size={18} color="var(--brand-blue)" /> Global Models
+          </h1>
+          <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+            Versions produced by federated aggregation (Module 9), evaluated on a held-out set before promotion.
           </p>
         </div>
-
         <div style={{ display: 'flex', gap: '8px' }}>
-          <button className="btn btn-secondary" onClick={() => alert('New Architecture Registration Wizard')}>
-            <Plus size={13} />
-            <span>Register New Architecture</span>
+          <button className="btn btn-secondary" onClick={reload} disabled={loading}>
+            <RefreshCw size={13} className={loading ? 'spin' : ''} /> <span>Refresh</span>
           </button>
-          <button className="btn btn-secondary" onClick={() => setActiveModal('exportWeights')}>
-            <Download size={13} />
-            <span>Export Model Weights (.pt)</span>
-          </button>
-          <button className="btn btn-primary" onClick={() => {
-            const el = document.getElementById('comparativeMatrix');
-            if (el) el.scrollIntoView({ behavior: 'smooth' });
-          }}>
-            <ArrowLeftRight size={13} />
-            <span>Compare Selected Models</span>
+          <button className="btn btn-primary" onClick={() => setActiveScreen('federation-models')}>
+            <span>Evaluate / promote</span> <ChevronRight size={13} />
           </button>
         </div>
       </div>
 
-      {/* 4 Summary Ribbon Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-            <span style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '600' }}>TOP PERFORMING CHECKPOINT</span>
-            <span className="badge badge-healthy" style={{ fontSize: '9px' }}>Rank 01</span>
-          </div>
-          <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--brand-blue)' }}>EfficientNet-B0-FL <span className="font-mono" style={{ fontSize: '11px' }}>v2.4</span></div>
-          <div style={{ fontSize: '22px', fontWeight: '700', color: '#f8fafc', marginTop: '2px' }} className="font-mono">
-            93.84% <span style={{ fontSize: '11px', color: 'var(--status-healthy)' }}>Dice 91.4%</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            <span>Loss: 0.1412</span>
-            <span style={{ color: 'var(--status-healthy)' }}>+0.82% vs Rd 13</span>
-          </div>
-        </div>
+      {[globalModels.error, architectures.error, storedModels.error].filter(Boolean).map((e) => <Notice key={e} tone="error">{e}</Notice>)}
 
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-            <span style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '600' }}>GOVERNED FL PARAMETERS</span>
-            <Cpu size={14} color="var(--accent-teal)" />
-          </div>
-          <div style={{ fontSize: '24px', fontWeight: '700', color: '#f8fafc', marginTop: '4px' }} className="font-mono">
-            284.6M
-          </div>
-          <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-            Active Task Ensembles Across 4 Nodes
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            <span>FP16 Gradient Cache</span>
-            <span style={{ color: '#38bdf8' }}>569.2 MB Sync size</span>
-          </div>
-        </div>
-
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-            <span style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '600' }}>PRIVACY INVARIANT</span>
-            <span className="badge badge-healthy" style={{ fontSize: '9px' }}>Certified</span>
-          </div>
-          <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--accent-teal)', marginTop: '4px' }} className="font-mono">
-            ε = 1.24 <span style={{ fontSize: '12px' }}>DP</span>
-          </div>
-          <div style={{ fontSize: '10px', color: 'var(--status-healthy)', marginTop: '2px' }}>
-            Zero Patient Inversion Possible
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            <span>Gaussian RDP σ=0.85</span>
-            <span className="font-mono">δ &lt; 10⁻⁵</span>
-          </div>
-        </div>
-
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-            <span style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '600' }}>DEPLOYMENT PIPELINE</span>
-            <span className="badge badge-blue" style={{ fontSize: '9px' }}>Triton v24.08</span>
-          </div>
-          <div style={{ fontSize: '14px', fontWeight: '700', color: '#f8fafc', marginTop: '4px' }}>
-            Triton Inference Ready
-          </div>
-          <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-            Signed Ed25519 Checkpoint Manifest
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            <span className="font-mono">SHA-256: 0x8a92...</span>
-            <span style={{ color: 'var(--status-healthy)' }}>Enclave Safe</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Tabs Filter */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ display: 'flex', gap: '4px' }}>
-          {[
-            { id: 'all', label: 'All Models (6)' },
-            { id: 'prod', label: 'Production Active (2)' },
-            { id: 'staging', label: 'Staging / Validation (2)' },
-            { id: 'archived', label: 'Archival / Baselines (2)' }
-          ].map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setActiveTab(t.id)}
-              className={`btn ${activeTab === t.id ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ fontSize: '11px', padding: '4px 10px' }}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        <input
-          type="text"
-          placeholder="Filter by architecture, modality, task..."
-          style={{ width: '260px', height: '30px', background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)', borderRadius: '4px', padding: '0 8px', fontSize: '11px', color: 'var(--text-primary)' }}
-        />
-      </div>
-
-      {/* Model Cards Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-        {models.map((m) => (
-          <div
-            key={m.id}
-            className="card"
-            style={{
-              background: m.isPrimary ? 'linear-gradient(180deg, #131b2e 0%, #0d1527 100%)' : 'var(--bg-card)',
-              border: `1px solid ${m.status === 'paused' ? 'var(--status-danger-border)' : 'var(--border-subtle)'}`
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
-                  <strong style={{ fontSize: '14px', color: '#ffffff' }}>{m.name}</strong>
-                  <span className={`badge ${m.status === 'paused' ? 'badge-danger' : 'badge-healthy'}`} style={{ fontSize: '9px' }}>
-                    {m.badge}
-                  </span>
-                </div>
-                <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{m.task}</div>
-              </div>
-              <span className="font-mono" style={{ fontSize: '9px', color: 'var(--text-muted)' }}>SHA: {m.sha}</span>
-            </div>
-
-            {/* Architecture Specs */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', background: 'var(--bg-nested)', padding: '8px 10px', borderRadius: '4px', fontSize: '10px', marginBottom: '10px' }}>
-              <div>
-                <div style={{ color: 'var(--text-muted)' }}>BACKBONE</div>
-                <strong style={{ color: 'var(--text-primary)' }}>{m.backbone}</strong>
-              </div>
-              <div>
-                <div style={{ color: 'var(--text-muted)' }}>PARAMETERS</div>
-                <strong className="font-mono" style={{ color: '#38bdf8' }}>{m.params}</strong>
-              </div>
-              <div>
-                <div style={{ color: 'var(--text-muted)' }}>FL SCHEME</div>
-                <strong style={{ color: 'var(--text-primary)' }}>{m.flScheme}</strong>
-              </div>
-              <div>
-                <div style={{ color: 'var(--text-muted)' }}>DP NOISE</div>
-                <strong className="font-mono" style={{ color: 'var(--accent-teal)' }}>{m.dpNoise}</strong>
-              </div>
-            </div>
-
-            {/* Metrics */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '10px', textAlign: 'center' }}>
-              <div>
-                <div style={{ fontSize: '9px', color: 'var(--text-muted)' }}>GLOBAL DICE / ACC</div>
-                <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--status-healthy)' }} className="font-mono">{m.dice || m.accuracy}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: '9px', color: 'var(--text-muted)' }}>MACRO F1</div>
-                <div style={{ fontSize: '16px', fontWeight: '700', color: '#f8fafc' }} className="font-mono">{m.f1}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: '9px', color: 'var(--text-muted)' }}>AUC-ROC</div>
-                <div style={{ fontSize: '16px', fontWeight: '700', color: '#f8fafc' }} className="font-mono">{m.auc}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: '9px', color: 'var(--text-muted)' }}>GLOBAL LOSS</div>
-                <div style={{ fontSize: '16px', fontWeight: '700', color: '#60a5fa' }} className="font-mono">{m.loss}</div>
-              </div>
-            </div>
-
-            {/* Status & Actions */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-subtle)', paddingTop: '8px' }}>
-              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                <div>{m.roundInfo}</div>
-                <div style={{ color: 'var(--text-secondary)' }}>{m.dataset}</div>
-              </div>
-
-              <div style={{ display: 'flex', gap: '6px' }}>
-                <button className="btn btn-ghost" style={{ fontSize: '10px', padding: '3px 6px' }} onClick={() => alert(`Inspecting ${m.name}`)}>
-                  Model Inspector
-                </button>
-                <button className="btn btn-secondary" style={{ fontSize: '10px', padding: '3px 6px' }} onClick={() => setActiveModal('exportWeights')}>
-                  <Download size={11} />
-                  <span>Weights</span>
-                </button>
-                <button className="btn btn-primary" style={{ fontSize: '10px', padding: '3px 6px' }}>
-                  Evaluate
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Screen 09: Comparative Architectural Matrix */}
-      <div id="comparativeMatrix" className="card" style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-strong)', marginTop: '8px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px' }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <ArrowLeftRight size={15} color="var(--brand-blue)" />
-              <strong style={{ fontSize: '14px' }}>Comparative Architectural Matrix</strong>
-            </div>
-            <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-              Differential parameter breakdown, convergence rates &amp; edge inference latency
-            </div>
-          </div>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-            Comparing: <strong style={{ color: 'var(--status-healthy)' }}>EfficientNet-B0-FL</strong> vs <strong style={{ color: '#3b82f6' }}>ResNet-50-FL</strong>
-          </div>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '20px' }}>
-          {/* Comparison Table */}
-          <div>
-            <table className="fl-table" style={{ fontSize: '11px' }}>
+      <div className="card">
+        <div className="card-header"><span className="card-title">Global model versions</span><span className="badge badge-neutral">{models.length}</span></div>
+        {models.length === 0 ? <Empty>{loading ? 'Loading...' : 'No global model yet. Aggregate a federation round to create one.'}</Empty> : (
+          <div className="table-container">
+            <table className="fl-table">
               <thead>
-                <tr>
-                  <th>EVALUATION METRIC / ATTRIBUTE</th>
-                  <th>EFFICIENTNET-B0-FL (v2.4) [PROD]</th>
-                  <th>RESNET-50-FL (v1.9) [STAGING]</th>
-                  <th>DELTA / ADVANTAGE</th>
-                </tr>
+                <tr><th>Task</th><th>Version</th><th>Architecture</th><th>Status</th><th>Accuracy</th><th>F1</th><th>Hospitals</th><th>Aggregation</th><th>Created</th></tr>
               </thead>
               <tbody>
-                <tr>
-                  <td>Parameter Footprint</td>
-                  <td className="font-mono">5,340,112 (5.3M)</td>
-                  <td className="font-mono">25,610,480 (25.6M)</td>
-                  <td style={{ color: 'var(--status-healthy)' }}>-79.1% (4.8x smaller)</td>
-                </tr>
-                <tr>
-                  <td>FL Convergence Speed (to 90% Acc)</td>
-                  <td className="font-mono">11 Rounds</td>
-                  <td className="font-mono">17 Rounds</td>
-                  <td style={{ color: 'var(--status-healthy)' }}>+35.3% faster sync</td>
-                </tr>
-                <tr>
-                  <td>DP Budget Consumed (ε)</td>
-                  <td className="font-mono">ε = 1.24 (σ=0.85)</td>
-                  <td className="font-mono">ε = 1.12 (σ=0.90)</td>
-                  <td style={{ color: 'var(--accent-teal)' }}>ResNet +0.12 strictness</td>
-                </tr>
-                <tr>
-                  <td>Clinical Sensitivity (Recall)</td>
-                  <td className="font-mono" style={{ color: 'var(--status-healthy)' }}>94.20%</td>
-                  <td className="font-mono">91.80%</td>
-                  <td style={{ color: 'var(--status-healthy)' }}>+2.40% Sensitivity</td>
-                </tr>
-                <tr>
-                  <td>Clinical Specificity</td>
-                  <td className="font-mono" style={{ color: 'var(--status-healthy)' }}>93.60%</td>
-                  <td className="font-mono">90.90%</td>
-                  <td style={{ color: 'var(--status-healthy)' }}>+2.70% Specificity</td>
-                </tr>
-                <tr>
-                  <td>Edge Latency (NVIDIA A100 TensorRT)</td>
-                  <td className="font-mono" style={{ color: 'var(--status-healthy)' }}>18.4 ms / slice</td>
-                  <td className="font-mono">34.2 ms / slice</td>
-                  <td style={{ color: 'var(--status-healthy)' }}>1.86x Real-time lead</td>
-                </tr>
+                {models.map((m) => {
+                  const e = latestEvaluation(m);
+                  return (
+                    <tr key={m.global_model_id} className={m.global_model_id === selected?.global_model_id ? 'selected' : ''}
+                      onClick={() => setSelectedId(m.global_model_id)} style={{ cursor: 'pointer' }}>
+                      <td>{m.task}</td>
+                      <td className="font-mono">v{m.version}</td>
+                      <td className="font-mono">{m.architecture}</td>
+                      <td><span className={statusBadge(m.status)}>{m.status}</span></td>
+                      <td className="font-mono">{pct(e?.accuracy)}</td>
+                      <td className="font-mono">{pct(e?.f1)}</td>
+                      <td>{m.participating_hospitals.length}</td>
+                      <td className="font-mono">{m.aggregation_method}</td>
+                      <td style={{ color: 'var(--text-muted)' }}>{fmtDate(m.created_at)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+        )}
+      </div>
 
-          {/* Radar Chart & ZK-Ledger Card */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ background: 'var(--bg-card)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <div style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', width: '100%', marginBottom: '4px' }}>
-                MULTI-AXIS RADAR PROFILING
-              </div>
-              <RadarChart size={170} />
+      {selected && (
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">{selected.task} v{selected.version} <span className="font-mono" style={{ color: 'var(--text-muted)' }}>{selected.global_model_id}</span></span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: '16px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div>Parameters: <strong className="font-mono">{selected.parameter_count?.toLocaleString() ?? '-'}</strong></div>
+              <div>Artifact size: <strong className="font-mono">{selected.artifact_size ? `${(selected.artifact_size / 1048576).toFixed(1)} MB` : '-'}</strong></div>
+              <div>Checksum: <span className="font-mono" style={{ wordBreak: 'break-all' }}>{selected.artifact_checksum || '-'}</span></div>
+              <div>Source updates: <strong className="font-mono">{selected.source_update_ids?.length ?? 0}</strong></div>
+              <div>Hospitals: {selected.participating_hospitals.length ? selected.participating_hospitals.join(', ') : '-'}</div>
+              {evaluation && (
+                <div style={{ marginTop: '6px' }}>
+                  Evaluated on <strong>{evaluation.sample_count}</strong> samples ({evaluation.evaluation_dataset_id}):
+                  accuracy <strong className="font-mono">{pct(evaluation.accuracy)}</strong>,
+                  precision <strong className="font-mono">{pct(evaluation.precision)}</strong>,
+                  recall <strong className="font-mono">{pct(evaluation.recall)}</strong>,
+                  F1 <strong className="font-mono">{pct(evaluation.f1)}</strong>
+                </div>
+              )}
             </div>
-
-            <div style={{ background: 'var(--bg-card)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                <strong style={{ fontSize: '11px', color: '#f8fafc' }}>Zero-Knowledge Checkpoint Ledger</strong>
-                <CheckCircle size={13} color="var(--status-healthy)" />
-              </div>
-              <p style={{ fontSize: '10px', color: 'var(--text-secondary)', lineHeight: 1.35, marginBottom: '8px' }}>
-                Every federated aggregation cycle requires signature verification from &gt;= 66% hospital nodes.
-              </p>
-              <div style={{ display: 'flex', gap: '6px' }}>
-                <button className="btn btn-secondary" style={{ fontSize: '10px', flex: 1 }} onClick={() => alert('ZK Proof exported to cryptographic audit ledger.')}>
-                  Export ZK Proof
-                </button>
-                <button className="btn btn-primary" style={{ fontSize: '10px', flex: 1 }} onClick={() => alert('Checkpoint promoted to production registry.')}>
-                  Promote to Production
-                </button>
-              </div>
+            <div>
+              {evaluation?.confusion_matrix
+                ? <ConfusionMatrixGrid matrix={evaluation.confusion_matrix} classOrder={classOrder(selected.class_mapping)} />
+                : <Empty>Not evaluated yet.</Empty>}
             </div>
           </div>
         </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+        <div className="card">
+          <div className="card-header"><span className="card-title">Stored model records</span><span className="badge badge-neutral">{storedModels.data.length}</span></div>
+          {storedModels.data.length === 0 ? <Empty>No stored model records.</Empty> : (
+            <div className="table-container">
+              <table className="fl-table">
+                <thead><tr><th>Disease</th><th>Architecture</th><th>Version</th><th>Status</th><th>Accuracy</th></tr></thead>
+                <tbody>
+                  {storedModels.data.map((m) => (
+                    <tr key={m.model_id}>
+                      <td>{m.disease}</td>
+                      <td className="font-mono">{m.architecture}</td>
+                      <td className="font-mono">{m.version}</td>
+                      <td><span className="badge badge-neutral">{m.status}</span></td>
+                      <td className="font-mono">{pct(m.metrics?.accuracy)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="card">
+          <div className="card-header"><span className="card-title">Architecture catalog (Module 6)</span><span className="badge badge-neutral">{architectures.data.length}</span></div>
+          {architectures.data.length === 0 ? <Empty>{loading ? 'Loading...' : 'Catalog unavailable.'}</Empty> : (
+            <div className="table-container">
+              <table className="fl-table">
+                <thead><tr><th>Name</th><th>Family</th><th>Resource tier</th><th>Input</th><th>Pretrained</th></tr></thead>
+                <tbody>
+                  {architectures.data.map((a) => (
+                    <tr key={a.name}>
+                      <td>{a.display_name}<div className="font-mono" style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{a.name}</div></td>
+                      <td>{a.family}</td>
+                      <td>{a.resource_tier}</td>
+                      <td className="font-mono">{a.default_input_size?.join('×')}</td>
+                      <td>{a.supports_pretrained ? 'yes' : 'no'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
+
+      <p style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+        Downloading model weights is not available yet (model export belongs to Module 15).
+      </p>
     </div>
   );
 };

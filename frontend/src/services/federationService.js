@@ -3,18 +3,13 @@
  * Communicates with backend /api/v1/federation endpoints.
  * Never accesses SQLite, MongoDB, or raw artifacts directly.
  */
+import authService from './authService';
 
 const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   ? import.meta.env.VITE_API_URL
   : 'http://localhost:5000/api/v1';
 
-function getToken() {
-  try {
-    return localStorage.getItem('medfl_researcher_token') || sessionStorage.getItem('medfl_researcher_token');
-  } catch {
-    return null;
-  }
-}
+const getToken = () => authService.getToken();
 
 function getHeaders() {
   const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
@@ -44,7 +39,8 @@ export const deleteJob = (jobId) => request('DELETE', `/jobs/${encodeURIComponen
 
 // ── Admin: Rounds ───────────────────────────────────────────
 export const createRound = (roundData) => request('POST', '/rounds', roundData);
-export const aggregateRound = (jobId, roundId) => request('POST', '/rounds/aggregate', { job_id: jobId, round_id: roundId });
+// forceClose: the admin closes the round before its deadline (Module 9 still requires the minimum participants).
+export const aggregateRound = (jobId, roundId, forceClose = false) => request('POST', '/rounds/aggregate', { job_id: jobId, round_id: roundId, force_close: forceClose });
 export const deleteRound = (roundId) => request('DELETE', `/rounds/${encodeURIComponent(roundId)}`);
 
 // ── Admin: Global Models, Evaluation, Promotion ─────────────

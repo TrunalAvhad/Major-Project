@@ -2,16 +2,20 @@
 import os
 from pathlib import Path
 from collections import Counter
+from typing import Optional
 from PIL import Image
 from hospital_client.dataset.models.dataset_profile import DatasetProfile
 from hospital_client.dataset.ingestion.validation import check_file_readability
 from hospital_client.dataset.ingestion.label_detection import infer_labels_and_splits
 from hospital_client.dataset.ingestion.duplicate_detection import compute_file_hash
+from hospital_client.dataset.ingestion.metadata_labels import ImageLabelSource, load_image_labels
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 
-def ingest_image_dataset(dataset_path: str) -> DatasetProfile:
+def ingest_image_dataset(dataset_path: str, label_source: Optional[ImageLabelSource] = None) -> DatasetProfile:
+    """Labels come from class folder names, or - when label_source is given - from a metadata CSV."""
     dataset_path = os.path.abspath(dataset_path)
+    metadata_csv = os.path.normcase(os.path.abspath(label_source.csv_path)) if label_source else None
     
     total = 0
     valid = 0
@@ -31,6 +35,8 @@ def ingest_image_dataset(dataset_path: str) -> DatasetProfile:
     
     for root, _, files in os.walk(dataset_path):
         for file in files:
+            if metadata_csv and os.path.normcase(os.path.join(root, file)) == metadata_csv:
+                continue  # the label file itself, when it sits inside the dataset folder
             ext = os.path.splitext(file)[1].lower()
             if ext not in SUPPORTED_EXTENSIONS:
                 unsupported.append(file)
@@ -70,6 +76,13 @@ def ingest_image_dataset(dataset_path: str) -> DatasetProfile:
                 corrupted.append({"file": file_path, "reason": f"Corrupted or unreadable image: {str(e)}"})
     
     classes, splits, class_dist = infer_labels_and_splits(discovered_files, dataset_path)
+    label_info = None
+    if label_source:
+        # Folder names may still mark train/val/test splits, but no longer name classes.
+        labels = load_image_labels(label_source, dataset_path, discovered_files)
+        class_dist = dict(Counter(labels.labels.values()))
+        classes = sorted(class_dist)
+        label_info = {**label_source.to_dict(), "summary": labels.summary}
     
     image_stats = {
         "formats_found": list(set(os.path.splitext(f)[1].lower() for f in discovered_files)),
@@ -92,6 +105,17 @@ def ingest_image_dataset(dataset_path: str) -> DatasetProfile:
             
     if not splits:
         warnings.append("No standard dataset split detected.")
+    if label_info:
+        s = label_info["summary"]
+        if s["rows_without_matching_image"]:
+            warnings.append(f"{s['rows_without_matching_image']} metadata CSV row(s) have no matching image file.")
+        if s["images_without_label"]:
+            warnings.append(f"{s['images_without_label']} image(s) have no label in the metadata CSV and will not be used.")
+        if s["images_excluded_by_label_map"]:
+            warnings.append(f"{s['images_excluded_by_label_map']} image(s) are excluded by the label map.")
+        if s["labelled_images_without_group"]:
+            warnings.append(f"{s['labelled_images_without_group']} labelled image(s) have no value in group column "
+                            f"'{label_source.group_column}'; grouped (lesion/patient-level) splitting needs one for every image.")
     
     errors = []
     if corrupted: errors.append(f"Corrupted files: {len(corrupted)}")
@@ -109,7 +133,8 @@ def ingest_image_dataset(dataset_path: str) -> DatasetProfile:
         splits={"detected_splits": splits},
         duplicate_information={"exact_duplicates": duplicates},
         errors=errors,
-        warnings=warnings
+        warnings=warnings,
+        label_source=label_info or {},
     )
     return profile
 

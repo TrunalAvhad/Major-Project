@@ -76,8 +76,9 @@ Module 3 is the hospital-side desktop application for clinical nodes. It provide
 The ML services (`datasetService`, `preprocessingService`, `resourceService`, `trainingService`,
 `modelService`, `inferenceService`) talk to the **hospital-local ML service** through
 `services/mlClient.js`, not to the backend: raw images and datasets never go to the backend.
-Shared ML state (active dataset, pipeline progress, hardware, training job) lives in
-`context/MLContext.jsx`.
+Shared ML state (active dataset, pipeline progress, hardware, training job, training runs,
+local models) lives in the Zustand store `stores/mlStore.js`. It is reset whenever a user signs
+in or out, and the running training job is resumed after a page reload.
 
 ---
 
@@ -151,9 +152,17 @@ Module 3 enforces the strict security rules of Module 1:
 ### 8. Module 16: Local Inference (`HospitalInferenceView.jsx`)
 - Select a model and an explicit version, a device (auto/CUDA/CPU) and a local image; the image is sent only to 127.0.0.1, processed with the model's own preprocessing spec, and its temporary copy is deleted after the prediction.
 - Predicted class, uncalibrated softmax confidence, full class probability distribution, timing, warnings, and the "model prediction, not a clinical diagnosis" notice.
-### 9. Module 18: Communications & Notifications (`CommunicationView.jsx`)
-- Consortium notifications inbox (round invitations, global model release alerts, sentinel health checks).
-- Secure operator dispatch chat channel with consortium lead investigators.
+### 9. Module 9: Federation Status (`HospitalFederationView.jsx`)
+- Eligibility of the selected dataset for each federation job, the participate flow (themed confirm modal, then the Training Monitor), and this hospital's submitted updates with their validation status.
+- Before a federated run starts, the local ML API downloads the round's base model from the backend into `trained/<architecture>/models/<base_model_id>/v<version>` (once per base model); Module 7 then refuses to train if its parameter checksum differs from the round's.
+- **Retry Submission** for a finished federated run whose update never reached Module 9: the local ML API (`POST /api/ml/federation/submit/<model_id>`) resubmits the run's handoff folder to the job and round saved in its `<model_id>_run.json`. Runs started before the round id was saved cannot be resubmitted (409).
+
+### 10. Settings (`HospitalSettingsView.jsx`)
+- Hospital id and name (from `/auth/me`), the hardware Module 8 measured (GPU/VRAM, CPU, RAM, disk) and password change. There are no manual compute settings: Module 8 sizes every run from the measurements.
+
+### 11. Module 18: Communications & Notifications (`HospitalCommunicationView.jsx`)
+- **Notifications are real**: `GET /api/v1/notifications` returns this hospital's notifications (stored in MongoDB, `Notification` model), and new ones arrive live on the hospital's Socket.io room `hospital_<hospital_id>`. The federation server sends `ROUND_OPEN` when a round opens and `ROUND_CLOSED` to hospitals that did not join a round when the admin aggregates it. Opening the tab marks them read (`POST /api/v1/notifications/read`); the bell shows the unread count.
+- **Operator messages are mock data** (no messaging API yet) and carry a "Mock data" banner.
 
 ---
 

@@ -12,6 +12,7 @@ const {
   getArchitectures,
   deleteJob,
   deleteRound,
+  downloadBaseModel,
   registerParticipant,
   submitUpdate
 } = require('../controllers/federationController');
@@ -26,6 +27,7 @@ router.use(requireAuth);
 
 // Admin and Hospital Operator shared endpoints
 router.get('/jobs', requireRole(ROLES.ADMIN, ROLES.HOSPITAL_OPERATOR), listJobs);
+router.get('/rounds/:round_id/base-model/:file', requireRole(ROLES.ADMIN, ROLES.HOSPITAL_OPERATOR), downloadBaseModel);
 
 // Admin-only endpoints
 router.get('/architectures', requireRole(ROLES.ADMIN), getArchitectures);

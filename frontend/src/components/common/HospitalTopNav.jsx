@@ -1,6 +1,8 @@
-import React from 'react';
-import { useApp } from '../../context/AppContext';
-import { useML } from '../../context/MLContext';
+import React, { useEffect } from 'react';
+import { useUiStore } from '../../stores/uiStore';
+import { useAuthStore, selectHospitalId } from '../../stores/authStore';
+import { useMLStore } from '../../stores/mlStore';
+import { useCommunicationStore, selectUnreadCount } from '../../stores/communicationStore';
 import { 
   ShieldCheck, 
   Cpu, 
@@ -9,18 +11,20 @@ import {
 } from 'lucide-react';
 
 export const HospitalTopNav = () => {
-  const {
-    activeScreen,
-    hospitalId,
-    notifications,
-    setActiveScreen
-  } = useApp();
-  const { hardware, trainingJob } = useML();
+  const { activeScreen, setActiveScreen } = useUiStore();
+  const hospitalId = useAuthStore(selectHospitalId);
+  const hardware = useMLStore((s) => s.hardware);
+  const trainingJob = useMLStore((s) => s.trainingJob);
+  const unreadCount = useCommunicationStore(selectUnreadCount);
+  const communicationLoaded = useCommunicationStore((s) => s.loaded);
+
+  useEffect(() => {
+    if (!communicationLoaded) useCommunicationStore.getState().load();
+  }, [communicationLoaded]);
 
   const isTraining = trainingJob?.status === 'running';
   const gpu = hardware?.gpu;
   const gb = (mb) => `${(mb / 1024).toFixed(1)} GB`;
-  const unreadCount = (notifications || []).filter(n => !n.read).length;
 
   const tabLabels = {
     dashboard: 'Hospital Workstation Dashboard',
@@ -30,7 +34,7 @@ export const HospitalTopNav = () => {
     training_monitor: 'Module 7: Local Training Execution Monitor',
     training_results: 'Module 7 / 9: Training Result & Federation Handoff',
     models: 'Module 6: Approved Local Model Registry',
-    inference: 'Module 16: Zero-Leakage Local Inference',
+    inference: 'Module 16: Local Inference',
     communication: 'Module 18: Consortium Communications',
     settings: 'Hospital Node Workstation Settings'
   };
@@ -123,7 +127,7 @@ export const HospitalTopNav = () => {
           }}
         >
           <ShieldCheck size={14} />
-          <span>Zero-Raw-Data Lock</span>
+          <span>Raw data stays local</span>
         </div>
 
         {/* Notifications Icon */}

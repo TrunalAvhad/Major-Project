@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
-import communicationService from '../services/communicationService';
+import React, { useEffect, useState } from 'react';
+import MockBanner from '../components/common/MockBanner';
+import { useCommunicationStore } from '../stores/communicationStore';
+import { Notice, Empty, fmtDate } from '../components/common/Notice';
 import PrivacyNotice from '../components/common/PrivacyNotice';
 import { 
   MessageSquare, 
@@ -13,17 +14,19 @@ import {
 } from 'lucide-react';
 
 const CommunicationView = () => {
-  const { notifications, messages, setMessages } = useApp();
+  const { notifications, messages, loaded, error, load, sendMessage, markAllRead } = useCommunicationStore();
+  useEffect(() => { if (!loaded) load(); }, [loaded, load]);
   const [inputText, setInputText] = useState('');
   const [activeSubTab, setActiveSubTab] = useState('notifications');
+  // Notifications on screen count as read (also those that arrive while it is open).
+  useEffect(() => { if (activeSubTab === 'notifications') markAllRead(); }, [activeSubTab, notifications, markAllRead]);
 
   const handleSend = async (e) => {
     e.preventDefault();
     if (!inputText.trim()) return;
 
     try {
-      const newMsg = await communicationService.sendMessage(inputText);
-      setMessages([...messages, newMsg]);
+      await sendMessage(inputText);
       setInputText('');
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -46,7 +49,7 @@ const CommunicationView = () => {
               </h2>
             </div>
             <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              Secure encrypted communications between this hospital node and consortium researchers.
+              Federation notifications for this hospital. Operator messages are still demo content.
             </p>
           </div>
 
@@ -72,8 +75,10 @@ const CommunicationView = () => {
       {/* Notifications Tab */}
       {activeSubTab === 'notifications' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {error && <Notice tone="error">{error}</Notice>}
+          {loaded && !error && notifications.length === 0 && <div className="card"><Empty>No notifications yet.</Empty></div>}
           {notifications.map((n) => (
-            <div key={n.id} className="card" style={{ padding: '14px' }}>
+            <div key={n.notification_id} className="card" style={{ padding: '14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span className={`pulse-dot ${n.read ? 'healthy' : 'warning'}`} />
@@ -85,7 +90,7 @@ const CommunicationView = () => {
                   </span>
                 </div>
                 <span className="font-mono text-muted" style={{ fontSize: '11px' }}>
-                  {n.timestamp}
+                  {fmtDate(n.created_at)}
                 </span>
               </div>
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.4, marginBottom: '6px' }}>
@@ -100,6 +105,7 @@ const CommunicationView = () => {
       )}
 
       {/* Messages Tab */}
+      {activeSubTab === 'messages' && <div style={{ marginBottom: '16px' }}><MockBanner module="Messaging (Module 18)" /></div>}
       {activeSubTab === 'messages' && (
         <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '520px' }}>
           <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '10px', marginBottom: '12px' }}>

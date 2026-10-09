@@ -916,4 +916,60 @@ describe('Modules 1, 2, 3 - Comprehensive Specification Test Suite', () => {
     });
   });
 
+  describe('Admin user list, audit log and hospital name', () => {
+    it('47. admin lists every account without password data, with hospital names', async () => {
+      const res = await request(app).get('/api/v1/admin/users').set('Authorization', `Bearer ${adminToken}`);
+      expect(res.status).toBe(200);
+      const users = res.body.data.users;
+      expect(users.map((u) => u.user_id).sort()).toEqual(
+        ['USR_admin_001', 'USR_hosp_operator', 'USR_res_approved', 'USR_res_pending']);
+      expect(JSON.stringify(users)).not.toContain('password');
+      expect(users.find((u) => u.user_id === 'USR_hosp_operator').hospital_name).toBe('St. Jude Clinical Research & AI Node');
+    });
+
+    it('48. user list filters by role and ignores non-string filters', async () => {
+      const res = await request(app).get('/api/v1/admin/users?role=researcher&status[$ne]=x')
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(res.status).toBe(200);
+      expect(res.body.data.users.every((u) => u.role === ROLES.RESEARCHER)).toBe(true);
+      expect(res.body.data.users).toHaveLength(2);
+    });
+
+    it('49. admin reads the audit log newest first, filtered by action', async () => {
+      const res = await request(app).get('/api/v1/admin/audit-logs?action=LOGIN_SUCCESS&limit=2')
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(res.status).toBe(200);
+      const logs = res.body.data.logs;
+      expect(logs).toHaveLength(2);
+      expect(logs.every((l) => l.action === 'LOGIN_SUCCESS')).toBe(true);
+      expect(new Date(logs[0].timestamp) >= new Date(logs[1].timestamp)).toBe(true);
+      expect(logs[0]._id).toBeUndefined();
+    });
+
+    it('50. researchers and hospital operators cannot read users or audit logs', async () => {
+      for (const token of [approvedResearcherToken, hospitalToken]) {
+        for (const path of ['/api/v1/admin/users', '/api/v1/admin/audit-logs']) {
+          const res = await request(app).get(path).set('Authorization', `Bearer ${token}`);
+          expect(res.status).toBe(403);
+        }
+      }
+    });
+
+    it('51. login and /auth/me return the hospital name for hospital operators only', async () => {
+      const login = await request(app).post('/api/v1/auth/login')
+        .send({ email: 'operator@stjude-clinical.org', password: 'hospital123' });
+      expect(login.body.data.user.hospital_name).toBe('St. Jude Clinical Research & AI Node');
+      const me = await request(app).get('/api/v1/auth/me').set('Authorization', `Bearer ${hospitalToken}`);
+      expect(me.body.data.user.hospital_name).toBe('St. Jude Clinical Research & AI Node');
+      const researcher = await request(app).get('/api/v1/auth/me').set('Authorization', `Bearer ${approvedResearcherToken}`);
+      expect(researcher.body.data.user.hospital_name).toBeNull();
+    });
+
+    it('52. disease list is empty (not invented) when no request or model exists', async () => {
+      const res = await request(app).get('/api/v1/admin/diseases').set('Authorization', `Bearer ${adminToken}`);
+      expect(res.status).toBe(200);
+      expect(res.body.data.diseases).toEqual([]);
+    });
+  });
+
 });

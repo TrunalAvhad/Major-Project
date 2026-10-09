@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import inferenceService from '../services/inferenceService';
-import modelService from '../services/modelService';
+import { useMLStore } from '../stores/mlStore';
 import PrivacyNotice from '../components/common/PrivacyNotice';
 import { Search, CheckCircle, ShieldCheck, Activity, Upload } from 'lucide-react';
 
@@ -10,7 +10,8 @@ const selectStyle = {
 };
 
 const InferenceView = () => {
-  const [models, setModels] = useState([]);
+  const { data: models, error: modelsError } = useMLStore((s) => s.models);
+  const refreshModels = useMLStore((s) => s.refreshModels);
   const [selectedKey, setSelectedKey] = useState('');
   const [device, setDevice] = useState('auto');
   const [file, setFile] = useState(null);
@@ -19,14 +20,11 @@ const InferenceView = () => {
   const [inferenceResult, setInferenceResult] = useState(null);
   const [error, setError] = useState(null);
 
+  useEffect(() => { refreshModels(); }, [refreshModels]);
   useEffect(() => {
-    modelService.getLocalModels()
-      .then((list) => {
-        setModels(list);
-        if (list.length) setSelectedKey(`${list[0].model_id}@${list[0].version}`);
-      })
-      .catch((e) => setError(e.message));
-  }, []);
+    if (!selectedKey && models.length) setSelectedKey(`${models[0].model_id}@${models[0].version}`);
+  }, [models, selectedKey]);
+  useEffect(() => { if (modelsError) setError(modelsError); }, [modelsError]);
 
   useEffect(() => () => preview && URL.revokeObjectURL(preview), [preview]);
 

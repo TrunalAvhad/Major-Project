@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
-import { useML } from '../context/MLContext';
+import { useUiStore } from '../stores/uiStore';
+import { useMLStore } from '../stores/mlStore';
 import preprocessingService from '../services/preprocessingService';
 import PrivacyNotice from '../components/common/PrivacyNotice';
 import PipelineStatus from '../components/training/PipelineStatus';
@@ -21,8 +21,8 @@ const inputStyle = {
 };
 
 const PreprocessingView = () => {
-  const { setActiveTab } = useApp();
-  const { activeDataset, pipeline, rerunPreprocessing } = useML();
+  const setActiveTab = useUiStore((s) => s.setActiveScreen);
+  const { activeDataset, pipeline, rerunPreprocessing } = useMLStore();
   const [config, setConfig] = useState(preprocessingService.getDefaultConfig());
   const report = activeDataset?.preprocessing;
   const sv = report?.split_validation;

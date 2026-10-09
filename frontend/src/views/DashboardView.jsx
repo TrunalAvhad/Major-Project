@@ -1,405 +1,220 @@
-import React from 'react';
-import { useApp } from '../context/AppContext';
-import { ConvergenceChart } from '../components/charts/ConvergenceChart';
-import {
-  Building2,
-  Activity,
-  Layers,
-  Clock,
-  ShieldCheck,
-  Pause,
-  Zap,
-  CheckCircle,
-  Network,
-  Lock,
-  ArrowUpRight,
-  ChevronRight,
-  Database
-} from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { useUiStore } from '../stores/uiStore';
+import { useAuthStore, selectRole } from '../stores/authStore';
+import { useRequestsStore } from '../stores/requestsStore';
+import { useAdminStore } from '../stores/adminStore';
+import { useFederationStore, currentRound, latestEvaluation, federationTimeline } from '../stores/federationStore';
+import { EpochLineChart } from '../components/charts/MLCharts';
+import { useAggregateRound } from '../components/federation/AggregateRoundDialog';
+import { Notice, Empty, fmtDate, pct, statusBadge } from '../components/common/Notice';
+import { Building2, Network, Layers, Cpu, Clock, Loader2, Play, ClipboardCheck, ChevronRight } from 'lucide-react';
 
+const COLLECTING = ['OPEN', 'RECEIVING', 'READY_FOR_AGGREGATION'];
+
+const StatCard = ({ label, value, sub, onClick, icon: Icon }) => (
+  <div className="card" onClick={onClick} style={{ cursor: onClick ? 'pointer' : 'default' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+      <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>{label}</span>
+      {Icon && <Icon size={14} color="var(--text-muted)" />}
+    </div>
+    <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--text-primary)' }} className="font-mono">{value}</div>
+    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>{sub}</div>
+  </div>
+);
+
+const Timeline = ({ events, emptyText }) => (
+  events.length === 0 ? <Empty>{emptyText}</Empty> : (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      {events.slice(0, 8).map((m, i) => (
+        <div key={i} style={{ display: 'flex', gap: '10px', padding: '8px 10px', background: 'var(--bg-nested)', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
+          <span className="font-mono" style={{ fontSize: '10px', color: 'var(--accent-teal)', minWidth: '130px' }}>{fmtDate(m.time)}</span>
+          <div>
+            <div style={{ fontSize: '12px', fontWeight: '600' }}>{m.title}</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>{m.detail}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+);
+
+/** Overview for admins (Module 9 federation + Module 1 data) and researchers (their training requests). */
 export const DashboardView = () => {
-  const { setActiveScreen, setActiveModal, sessionStatus, setSessionStatus } = useApp();
+  const isAdmin = useAuthStore(selectRole) === 'admin';
+  return isAdmin ? <AdminOverview /> : <ResearcherOverview />;
+};
 
-  const hospitalsAlignment = [
-    { name: 'Johns Hopkins', cos: '0.968', lat: '48 ms', pct: 96.8 },
-    { name: 'Mayo Clinic', cos: '0.952', lat: '62 ms', pct: 95.2 },
-    { name: 'Charité Berlin', cos: '0.941', lat: '104 ms', pct: 94.1 },
-    { name: 'Toronto General', cos: '0.974', lat: '39 ms', pct: 97.4 },
-    { name: 'Mass General', cos: '0.981', lat: '41 ms', pct: 98.1 },
-    { name: 'Seoul Nat Univ', cos: '0.918', lat: '162 ms', pct: 91.8 },
-    { name: 'NHS Trust London', cos: '0.939', lat: '98 ms', pct: 93.9 },
-  ];
+const AdminOverview = () => {
+  const setActiveScreen = useUiStore((s) => s.setActiveScreen);
+  const { requests, loadRequests } = useRequestsStore();
+  const { telemetry, loadTelemetry } = useAdminStore();
+  const { jobs, globalModels, loadJobs, loadGlobalModels, evaluateModel } = useFederationStore();
+  const [aggregateDialog, startAggregate] = useAggregateRound(() => loadGlobalModels());
+  const [busy, setBusy] = useState(null);
+  const [actionError, setActionError] = useState(null);
 
-  const milestones = [
-    { time: '09:42:15', title: 'Global Model v2.4 Aggregated & Sealed', desc: 'Server-side FedAvg completed in 14.2s. Gaussian DP noise added (ε=1.24, clipping L2-norm=1.5). Weights dispatched to model registry.', hash: '0x9c..4a' },
-    { time: '09:40:02', title: 'All 8 Edge Hospital Updates Received', desc: 'Zero Byzantine or label-flipping vectors detected by Multi-Krum & Trimmed Mean filter. Cosine similarity threshold standard satisfied.', status: '0 Poisoning' },
-    { time: '08:35:10', title: 'Charité Berlin Local Training Completed', desc: 'Optimizer: AdamW (lr=1e-4). Local validation loss down to 0.158. Gradient delta ΔW uploaded via TLS 1.3 mTLS tunnel.', meta: 'Batch 32 • 5 Ep' },
-    { time: '08:12:00', title: 'Round 14 Dispatched to Hospital Nodes', desc: 'Encrypted model weights synchronized across 8 local clinical firewalls. Client-side local training pipeline initiated.', meta: 'Global v2.3' }
-  ];
+  useEffect(() => { loadRequests(); loadTelemetry(); loadJobs(); loadGlobalModels(); },
+    [loadRequests, loadTelemetry, loadJobs, loadGlobalModels]);
+
+  const models = globalModels.data;
+  const round = currentRound(jobs.data);
+  const roundModels = round ? models.filter((m) => m.federation_job_id === round.federation_job_id) : [];
+  const versions = [...roundModels].sort((a, b) => a.version - b.version)
+    .map((m) => ({ m, e: latestEvaluation(m) }))
+    .filter(({ e }) => e)
+    .map(({ m, e }) => ({ epoch: m.version, accuracy: e.accuracy, f1: e.f1 }));
+  const latestModel = [...roundModels].sort((a, b) => b.version - a.version)[0];
+  const mainModel = models.find((m) => m.status === 'MAIN');
+  const openRounds = jobs.data.flatMap((j) => j.rounds || []).filter((r) => COLLECTING.includes(r.status)).length;
+  const openRequests = requests.data.filter((r) => ['OPEN', 'ACTIVE'].includes(r.status)).length;
+  const hospitals = telemetry.data?.hospital_nodes || [];
+  const errors = [jobs.error, globalModels.error, telemetry.error, requests.error, actionError].filter(Boolean);
+
+  const run = async (key, fn) => {
+    setBusy(key);
+    setActionError(null);
+    try { await fn(); } catch (e) { setActionError(e.message); } finally { setBusy(null); }
+  };
+
+  const canAggregate = round && COLLECTING.includes(round.status)
+    && round.accepted_participants.length >= Math.max(1, round.minimum_participants || 1);
 
   return (
     <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      {/* 5 Top Summary Metric Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px' }}>
-        {/* Card 1 */}
-        <div className="card" onClick={() => setActiveScreen('hospitals')} style={{ cursor: 'pointer' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>HOSPITAL NODES</span>
-            <span className="badge badge-healthy" style={{ fontSize: '9px' }}>● 100% QUORUM</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-            <span style={{ fontSize: '24px', fontWeight: '700', color: '#f8fafc' }} className="font-mono">8</span>
-            <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>/ 8 CONNECTED</span>
-          </div>
-          <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            mTLS 1.3 Strict <strong style={{ color: 'var(--status-healthy)' }}>0 egress</strong>
-          </div>
-        </div>
+      {aggregateDialog}
+      {errors.map((e) => <Notice key={e} tone="error">{e}</Notice>)}
 
-        {/* Card 2 */}
-        <div className="card" onClick={() => setActiveScreen('training')} style={{ cursor: 'pointer' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>LIVE FL SESSION</span>
-            <span className="badge badge-blue" style={{ fontSize: '9px' }}>EXP-D84</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-            <span style={{ fontSize: '24px', fontWeight: '700', color: '#f8fafc' }} className="font-mono">1</span>
-            <span style={{ fontSize: '12px', color: 'var(--text-primary)', fontWeight: '500' }}>Chest CT Pulmo</span>
-          </div>
-          <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Nodule Detection <span style={{ color: '#60a5fa' }}>FedAvg v3</span>
-          </div>
-        </div>
-
-        {/* Card 3 */}
-        <div className="card" onClick={() => setActiveScreen('models')} style={{ cursor: 'pointer' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>TASK MODELS</span>
-            <span className="badge" style={{ fontSize: '9px', background: 'rgba(255,255,255,0.06)' }}>REGISTRY</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-            <span style={{ fontSize: '24px', fontWeight: '700', color: '#f8fafc' }} className="font-mono">6</span>
-            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Registered</span>
-          </div>
-          <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            DenseNet • SwinUN... <strong style={{ color: 'var(--text-primary)' }}>4 Prod</strong>
-          </div>
-        </div>
-
-        {/* Card 4 */}
-        <div className="card" onClick={() => setActiveScreen('training')} style={{ cursor: 'pointer' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>CURRENT ROUND</span>
-            <span className="badge badge-cyan" style={{ fontSize: '9px' }}>EPOCH SYNC</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-            <span style={{ fontSize: '24px', fontWeight: '700', color: '#f8fafc' }} className="font-mono">14</span>
-            <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>/ 20</span>
-            <span className="badge badge-healthy" style={{ fontSize: '9px', marginLeft: 'auto' }}>70%</span>
-          </div>
-          <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Agg: 4m ago • <span style={{ color: '#38bdf8' }}>Next: 01:24</span>
-          </div>
-        </div>
-
-        {/* Card 5 */}
-        <div className="card" onClick={() => setActiveScreen('security')} style={{ cursor: 'pointer' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>BYZANTINE GUARD</span>
-            <span className="badge badge-healthy" style={{ fontSize: '9px' }}>● OPTIMAL</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-            <span style={{ fontSize: '24px', fontWeight: '700', color: 'var(--status-healthy)' }} className="font-mono">0</span>
-            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Anomalies</span>
-            <span style={{ fontSize: '10px', color: 'var(--accent-teal)', marginLeft: 'auto' }}>82% DP rem</span>
-          </div>
-          <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            ε=1.24 δ=1e-5 • <span style={{ color: 'var(--status-healthy)' }}>Laplace OK</span>
-          </div>
-        </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+        <StatCard label="ACTIVE HOSPITALS" icon={Building2} value={hospitals.length}
+          sub="Registered with status active" onClick={() => setActiveScreen('hospitals')} />
+        <StatCard label="TRAINING REQUESTS" icon={Layers} value={openRequests}
+          sub={`open or active, of ${requests.data.length} total`} />
+        <StatCard label="FEDERATION JOBS" icon={Network} value={jobs.data.length}
+          sub={`${openRounds} round(s) collecting updates`} onClick={() => setActiveScreen('training')} />
+        <StatCard label="GLOBAL MODELS" icon={Cpu} value={models.length}
+          sub={mainModel ? `Main: ${mainModel.task} v${mainModel.version}` : 'No model promoted yet'} onClick={() => setActiveScreen('federation-models')} />
       </div>
 
-      {/* Active FL Session Card */}
-      <div className="card" style={{ background: 'linear-gradient(180deg, #131b2e 0%, #0e1526 100%)' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '14px' }}>
+      <div className="card">
+        <div className="card-header">
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-              <span className="badge badge-blue" style={{ fontSize: '10px' }}>ACTIVE SESSION</span>
-              <span className="font-mono" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>ID: EXP-FL-2025-084</span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--status-healthy)', fontSize: '11px' }}>
-                <span className="pulse-dot healthy" /> Aggregating Server Online
-              </span>
-            </div>
-            <h2 style={{ fontSize: '16px', fontWeight: '700', color: '#ffffff' }}>
-              EfficientNet-B0-FL v2.4 (Chest CT Pulmo Segmentation &amp; Nodule Classification)
-            </h2>
+            <div className="card-title">Current federation round</div>
+            {round && <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+              {round.job.task} · {round.job.architecture} · round {round.round_number} · <span className="font-mono">{round.round_id}</span>
+            </div>}
           </div>
-
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              className="btn btn-secondary"
-              onClick={() => setActiveModal('haltTraining')}
-            >
-              <Pause size={13} />
-              <span>Pause Round</span>
-            </button>
-            <button
-              className="btn btn-primary"
-              onClick={() => setActiveScreen('training')}
-            >
-              <Zap size={13} />
-              <span>Trigger Fast Eval</span>
-            </button>
-          </div>
+          {round && <span className={statusBadge(round.status)}>{round.status}</span>}
         </div>
 
-        {/* 4 Core Metrics */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: '12px',
-          background: 'var(--bg-nested)',
-          padding: '12px 16px',
-          borderRadius: '8px',
-          border: '1px solid var(--border-subtle)',
-          marginBottom: '14px'
-        }}>
-          <div>
-            <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '600' }}>GLOBAL ACCURACY</div>
-            <div style={{ fontSize: '20px', fontWeight: '700', color: 'var(--status-healthy)' }} className="font-mono">
-              93.84% <span style={{ fontSize: '11px', color: '#10b981' }}>+1.12%</span>
+        {jobs.status === 'loading' && !round ? <Empty><Loader2 size={14} className="spin" /> Loading...</Empty> : !round ? (
+          <Empty>No federation round yet. Create a job and a round on the Federation Jobs page.</Empty>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', background: 'var(--bg-nested)', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-subtle)', marginBottom: '12px', fontSize: '11px' }}>
+              <div>Expected<div className="font-mono" style={{ fontSize: '18px', fontWeight: 700 }}>{round.expected_participants.length}</div></div>
+              <div>Accepted<div className="font-mono" style={{ fontSize: '18px', fontWeight: 700, color: 'var(--status-healthy)' }}>{round.accepted_participants.length}</div></div>
+              <div>Rejected / quarantined<div className="font-mono" style={{ fontSize: '18px', fontWeight: 700, color: 'var(--status-danger)' }}>{round.rejected_participants.length + round.quarantined_participants.length}</div></div>
+              <div>Deadline<div className="font-mono" style={{ fontSize: '12px', fontWeight: 600, marginTop: '4px' }}>{fmtDate(round.deadline)}</div></div>
             </div>
-            <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Target: 92.00% (✓ surpassed)</div>
-          </div>
 
-          <div>
-            <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '600' }}>GLOBAL LOSS (CROSS-ENTROPY)</div>
-            <div style={{ fontSize: '20px', fontWeight: '700', color: '#60a5fa' }} className="font-mono">
-              0.1420 <span style={{ fontSize: '11px', color: '#60a5fa' }}>-0.028</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', marginBottom: '12px' }}>
+              <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: '600' }}>EXPECTED HOSPITALS:</span>
+              {round.expected_participants.map((h) => {
+                const state = round.accepted_participants.includes(h) ? 'ACCEPTED'
+                  : round.rejected_participants.includes(h) ? 'REJECTED'
+                    : round.received_participants.includes(h) ? 'RECEIVED' : 'WAITING';
+                return <span key={h} className={statusBadge(state)} style={{ fontSize: '10px' }}>{h} · {state}</span>;
+              })}
             </div>
-            <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Epoch convergence stable</div>
-          </div>
 
-          <div>
-            <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '600' }}>MACRO F1 SCORE</div>
-            <div style={{ fontSize: '20px', fontWeight: '700', color: '#ffffff' }} className="font-mono">
-              0.926 <span className="badge badge-healthy" style={{ fontSize: '9px', verticalAlign: 'middle' }}>Balanced</span>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button className="btn btn-primary" disabled={!canAggregate || busy}
+                title={canAggregate ? '' : 'Needs the minimum number of accepted updates while the round is collecting'}
+                onClick={() => startAggregate(round.job, round)}>
+                <Play size={13} /> <span>Aggregate round</span>
+              </button>
+              {latestModel && !latestEvaluation(latestModel) && (
+                <button className="btn btn-secondary" disabled={!!busy} onClick={() => run('eval', () => evaluateModel(latestModel.global_model_id))}>
+                  {busy === 'eval' ? <Loader2 size={13} className="spin" /> : <ClipboardCheck size={13} />} <span>Evaluate v{latestModel.version}</span>
+                </button>
+              )}
+              <button className="btn btn-ghost" onClick={() => setActiveScreen('training')}>
+                <span>Federation jobs</span> <ChevronRight size={12} />
+              </button>
             </div>
-            <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>AUC-ROC: 0.9782</div>
-          </div>
-
-          <div>
-            <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '600' }}>SERVER FEDAVG DURATION</div>
-            <div style={{ fontSize: '20px', fontWeight: '700', color: '#f8fafc' }} className="font-mono">
-              14.2s <span style={{ fontSize: '11px', color: 'var(--status-healthy)' }}>Krum check pass</span>
-            </div>
-            <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Weights: 184.2 MB compressed</div>
-          </div>
-        </div>
-
-        {/* Progress Bar */}
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginBottom: '4px' }}>
-            <span><strong>Round 14 of 20</strong> • Local training done • Differential noise applied</span>
-            <span className="font-mono" style={{ color: 'var(--accent-teal)' }}>70% Session Progress</span>
-          </div>
-          <div style={{ height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '3px', overflow: 'hidden' }}>
-            <div style={{ width: '70%', height: '100%', background: 'linear-gradient(90deg, #2563eb, #06b6d4)' }} />
-          </div>
-        </div>
-
-        {/* 8 Participating Enclaves verified chips */}
-        <div style={{ marginTop: '12px', display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
-          <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: '600' }}>
-            FEDERATED QUORUM (8/8 VERIFIED):
-          </span>
-          {[
-            'Johns Hopkins', 'Mayo Clinic', 'Charité Berlin', 'Toronto General',
-            'Mass General', 'Seoul Nat Univ', 'NHS Trust', 'Zurich Hospital'
-          ].map((h, i) => (
-            <div key={i} style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              background: 'var(--bg-nested)',
-              border: '1px solid var(--border-subtle)',
-              padding: '2px 7px',
-              borderRadius: '4px',
-              fontSize: '10px'
-            }}>
-              <CheckCircle size={10} color="var(--status-healthy)" />
-              <span>{h}</span>
-              <span style={{ color: 'var(--status-healthy)', fontSize: '9px' }}>ΔW</span>
-            </div>
-          ))}
-        </div>
+          </>
+        )}
       </div>
 
-      {/* Two Columns: Convergence & Node Gradient Similarity */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '14px' }}>
-        {/* Left Column: Convergence Chart */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: '14px' }}>
         <div className="card">
           <div className="card-header">
             <div>
-              <div className="card-title">Federated Global Convergence</div>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Accuracy &amp; Validation Loss Trajectory (Rounds 1 - 14)</div>
+              <div className="card-title">Global model evaluation by version</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{round ? round.job.task : 'Current job'} · held-out evaluation set</div>
             </div>
           </div>
-          <ConvergenceChart height={170} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-secondary)', marginTop: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '6px' }}>
-            <span>✔ Monotonic convergence pattern observed with zero gradient divergence across institutions.</span>
-            <span>Learning Rate: <strong className="font-mono">1e-4 Cosine</strong></span>
-          </div>
+          <EpochLineChart epochs={versions} xLabel="global model version" yMax={1}
+            emptyText="No evaluated global model for this job yet."
+            series={[{ key: 'accuracy', label: 'Accuracy', color: '#06b6d4' }, { key: 'f1', label: 'F1', color: '#60a5fa' }]} />
+          {versions.length > 0 && (
+            <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+              Latest: accuracy <strong className="font-mono">{pct(versions[versions.length - 1].accuracy)}</strong>,
+              F1 <strong className="font-mono">{pct(versions[versions.length - 1].f1)}</strong>
+            </div>
+          )}
         </div>
 
-        {/* Right Column: Node Gradient Similarity & Latency */}
         <div className="card">
           <div className="card-header">
-            <div>
-              <div className="card-title">Node Gradient Similarity &amp; Latency</div>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Cosine Alignment to FedAvg Consensus &amp; Round Uplink ms</div>
-            </div>
-            <span className="badge badge-healthy" style={{ fontSize: '9px' }}>NO DATA DRIFT</span>
+            <div className="card-title"><Clock size={15} color="var(--brand-blue)" /> <span>Federation timeline</span></div>
+            <button className="btn btn-ghost" style={{ fontSize: '11px', padding: '2px 6px' }} onClick={() => setActiveScreen('audit')}>
+              <span>Audit log</span> <ChevronRight size={12} />
+            </button>
           </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {hospitalsAlignment.map((h, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{ width: '95px', fontSize: '11px', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {h.name}
-                </span>
-                <div style={{ flex: 1, height: '8px', background: 'rgba(255,255,255,0.06)', borderRadius: '2px', overflow: 'hidden' }}>
-                  <div style={{ width: `${h.pct}%`, height: '100%', background: '#10b981' }} />
-                </div>
-                <span className="font-mono" style={{ fontSize: '10px', width: '50px', color: '#10b981', textAlign: 'right' }}>
-                  cos {h.cos}
-                </span>
-                <span className="font-mono" style={{ fontSize: '10px', width: '45px', color: 'var(--text-muted)', textAlign: 'right' }}>
-                  {h.lat}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted)', marginTop: '10px', borderTop: '1px solid var(--border-subtle)', paddingTop: '6px' }}>
-            <span>Krum Outlier Threshold: <strong style={{ color: 'var(--status-danger)' }}>&lt; 0.700</strong></span>
-            <span>Mean Cosine: <strong style={{ color: 'var(--status-healthy)' }}>0.9529 (±0.019)</strong></span>
-          </div>
+          <Timeline events={federationTimeline(jobs.data, models)} emptyText="Nothing has happened in Module 9 yet." />
         </div>
       </div>
+    </div>
+  );
+};
 
-      {/* Bottom Grid: Milestones & Zero-Raw-Data Protocol Card */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: '14px' }}>
-        {/* Milestones */}
-        <div className="card">
-          <div className="card-header">
-            <div className="card-title">
-              <Clock size={15} color="var(--brand-blue)" />
-              <span>Federated Milestones &amp; Audit Log</span>
-            </div>
-            <button 
-              className="btn btn-ghost" 
-              style={{ fontSize: '11px', padding: '2px 6px' }}
-              onClick={() => setActiveScreen('audit')}
-            >
-              <span>Full Audit Ledger</span>
-              <ChevronRight size={12} />
-            </button>
-          </div>
+const ResearcherOverview = () => {
+  const setActiveScreen = useUiStore((s) => s.setActiveScreen);
+  const { myRequests, loadMyRequests } = useRequestsStore();
+  useEffect(() => { loadMyRequests(); }, [loadMyRequests]);
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {milestones.map((m, i) => (
-              <div key={i} style={{
-                display: 'flex',
-                gap: '10px',
-                padding: '8px 10px',
-                background: 'var(--bg-nested)',
-                borderRadius: '6px',
-                border: '1px solid var(--border-subtle)'
-              }}>
-                <span className="font-mono" style={{ fontSize: '10px', color: 'var(--accent-teal)', minWidth: '55px' }}>
-                  {m.time}
-                </span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-primary)' }}>
-                    {m.title}
-                  </div>
-                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px', lineHeight: 1.35 }}>
-                    {m.desc}
-                  </p>
-                </div>
-                {m.hash && (
-                  <span className="font-mono" style={{ fontSize: '10px', color: 'var(--status-healthy)', alignSelf: 'flex-start' }}>
-                    {m.hash}
-                  </span>
-                )}
-                {m.status && (
-                  <span className="badge badge-healthy" style={{ fontSize: '9px', alignSelf: 'flex-start' }}>
-                    {m.status}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
+  const requests = myRequests.data;
+  const participations = requests.flatMap((r) => r.participating_hospitals.map((h) => ({ ...h, request: r })));
+  const hospitals = new Set(participations.filter((p) => p.status !== 'WITHDRAWN').map((p) => p.hospital_id));
+  const training = participations.filter((p) => p.status === 'TRAINING');
+  const completed = participations.filter((p) => p.status === 'COMPLETED');
+
+  const events = [
+    ...requests.map((r) => ({ time: r.created_at, title: `Request published: ${r.disease}`, detail: `${r.task} · ${r.request_id}` })),
+    ...participations.map((p) => ({ time: p.joined_at, title: `${p.hospital_name || p.hospital_id} joined`, detail: `${p.request.disease} · ${p.status}` })),
+    ...participations.filter((p) => p.withdrawn_at).map((p) => ({ time: p.withdrawn_at, title: `${p.hospital_name || p.hospital_id} withdrew`, detail: p.withdrawal_reason || p.request.disease })),
+  ].sort((a, b) => String(b.time).localeCompare(String(a.time)));
+
+  return (
+    <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {myRequests.error && <Notice tone="error">{myRequests.error}</Notice>}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+        <StatCard label="MY REQUESTS" icon={Layers} value={requests.length}
+          sub={`${requests.filter((r) => ['OPEN', 'ACTIVE'].includes(r.status)).length} open or active`} onClick={() => setActiveScreen('training')} />
+        <StatCard label="PARTICIPATING HOSPITALS" icon={Building2} value={hospitals.size} sub="across my requests" onClick={() => setActiveScreen('hospitals')} />
+        <StatCard label="TRAINING NOW" icon={Network} value={training.length} sub="hospitals reporting epochs" onClick={() => setActiveScreen('monitoring')} />
+        <StatCard label="LOCAL TRAINING DONE" icon={ClipboardCheck} value={completed.length} sub="hospital runs completed" />
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title"><Clock size={15} color="var(--brand-blue)" /> <span>Activity on my requests</span></div>
+          <button className="btn btn-ghost" style={{ fontSize: '11px', padding: '2px 6px' }} onClick={() => setActiveScreen('training')}>
+            <span>Training requests</span> <ChevronRight size={12} />
+          </button>
         </div>
-
-        {/* Zero-Raw-Data Strict Air-Gap Protocol Card */}
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-          <div>
-            <div className="card-header">
-              <div className="card-title">
-                <Lock size={15} color="var(--status-healthy)" />
-                <span>Zero-Raw-Data Protocol</span>
-              </div>
-              <span className="badge badge-healthy" style={{ fontSize: '9px' }}>STRICT AIR-GAP</span>
-            </div>
-
-            <div style={{
-              background: 'rgba(16, 185, 129, 0.06)',
-              border: '1px solid var(--status-healthy-border)',
-              borderRadius: '6px',
-              padding: '10px 12px',
-              marginBottom: '12px'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600', color: 'var(--status-healthy)', fontSize: '12px' }}>
-                <ShieldCheck size={14} />
-                <span>Zero Patient Images Transferred</span>
-              </div>
-              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px', lineHeight: 1.4 }}>
-                Strict mathematical guarantee. Only ephemeral numerical gradient updates (ΔW) leave local institutional PACS systems.
-              </p>
-            </div>
-
-            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Avg Node VRAM Utilization:</span>
-                <strong className="font-mono" style={{ color: 'var(--text-primary)' }}>14.2 GB / 24 GB (A100/H100)</strong>
-              </div>
-              <div style={{ height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '3px', overflow: 'hidden' }}>
-                <div style={{ width: '63%', height: '100%', background: '#3b82f6' }} />
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
-                <span>Edge Compute Load:</span>
-                <span style={{ color: 'var(--status-healthy)' }}>78% Peak (Nominal)</span>
-              </div>
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px', marginTop: '14px' }}>
-            <button className="btn btn-secondary" style={{ fontSize: '10px' }} onClick={() => setActiveScreen('training')}>
-              <Network size={12} />
-              <span>View Topology</span>
-            </button>
-            <button className="btn btn-secondary" style={{ fontSize: '10px' }} onClick={() => setActiveModal('exportWeights')}>
-              <Database size={12} />
-              <span>Inspect Weights</span>
-            </button>
-            <button className="btn btn-secondary" style={{ fontSize: '10px' }} onClick={() => setActiveScreen('security')}>
-              <ShieldCheck size={12} />
-              <span>Security Ledger</span>
-            </button>
-          </div>
-        </div>
+        <Timeline events={events} emptyText="No activity yet. Publish a training request to get started." />
       </div>
     </div>
   );

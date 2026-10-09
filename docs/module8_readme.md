@@ -1,5 +1,23 @@
 # Module 8: Resource-Aware Training
 
+## At a glance: how the model changes with the machine
+1. **Detect:** GPU and free VRAM (`torch.cuda.mem_get_info`), GPU load (`nvidia-smi`), CPU cores, RAM, disk (`psutil`).
+2. **Device:** CUDA if usable, else CPU. **Precision:** fp16 on CUDA, fp32 on CPU.
+3. **Memory budget:** GPU `(free VRAM - 400 MB) x 0.80`; CPU `available RAM x 0.70`.
+4. **Per architecture (all 8):**
+   - **Batch size:** largest of 64/32/16/8/4/2/1 that passes a memory estimate *and* a real one-step dry run on this machine. None fits -> **Unsafe**.
+   - **Epochs:** as many as fit the machine tier's time budget (20/30/45/60 min per 25k training images), within 3-10.
+   - **Workers:** 0/2/4, keeping 2 cores free.
+5. **Options:**
+   - **Recommended:** the heaviest tier that still trains the full 10 epochs in budget and has enough data (high-end models need 50k images from scratch).
+   - **Fast:** one tier lighter, or fewer epochs.
+   - **High-Capacity:** one tier heavier, or more epochs; "Not Recommended" if over budget.
+   - **Manual:** your own choice; Unsafe models are refused.
+6. **At run time:** CUDA out-of-memory -> retry with half the batch size, at most twice. Model and device are never changed silently.
+7. The chosen option becomes a normal Module 7 `TrainingConfig` (`resolved_config.py`).
+
+All thresholds live in `policy.py`. They are declared approximations, not universal measurements. Plain-language guide: [README.md](README.md) section 5.5.
+
 ## 1. Purpose
 
 Module 8 is the hospital/local-side **resource-aware training decision layer**. It detects the

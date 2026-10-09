@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
+import { useAuthStore } from '../stores/authStore';
+import { useUiStore } from '../stores/uiStore';
 import { Building2, ShieldCheck, CheckCircle2, ArrowLeft, Send, AlertCircle, Loader2 } from 'lucide-react';
 
 export const HospitalRegisterView = () => {
-  const { register, setActiveScreen } = useApp();
-  const [hospitalName, setHospitalName] = useState('St. Jude Clinical Research & AI Node');
-  const [hospitalEmail, setHospitalEmail] = useState('operator@stjude-clinical.org');
+  const register = useAuthStore((s) => s.register);
+  const setActiveScreen = useUiStore((s) => s.setActiveScreen);
+  const [hospitalName, setHospitalName] = useState('');
+  const [hospitalEmail, setHospitalEmail] = useState('');
   const [registrationId, setRegistrationId] = useState(`HOSP_${Math.floor(100000 + Math.random() * 900000)}`);
-  const [operatorName, setOperatorName] = useState('Dr. Marcus Vance');
-  const [password, setPassword] = useState('hospital123');
+  const [operatorName, setOperatorName] = useState('');
+  const [password, setPassword] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
@@ -62,9 +64,6 @@ export const HospitalRegisterView = () => {
           <Building2 size={14} />
           <span><strong>HOSPITAL NODE ENROLLMENT PROTOCOL</strong> :: FEDERATED CLINICAL NETWORK</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '10px' }} className="font-mono">
-          <span>COMPLIANCE: <strong style={{ color: 'var(--status-healthy)' }}>HIPAA / GDPR ENCLAVE</strong></span>
-        </div>
       </div>
 
       {/* Container */}
@@ -78,7 +77,7 @@ export const HospitalRegisterView = () => {
             Register Clinical Hospital Node
           </h1>
           <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Enroll your hospital imaging enclave into the privacy-preserving federated deep learning consortium network.
+            Register your hospital as a participant in the federated deep learning platform.
           </p>
         </div>
 
@@ -225,7 +224,7 @@ export const HospitalRegisterView = () => {
 
                 <div style={{ gridColumn: 'span 2' }}>
                   <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                    NODE CRYPTOGRAPHIC PASSPHRASE / PASSWORD * <span style={{ color: 'var(--accent-teal)' }}>(Saved to MongoDB)</span>
+                    OPERATOR PASSWORD * <span style={{ color: 'var(--accent-teal)' }}>(Saved to MongoDB)</span>
                   </label>
                   <input
                     type="password"
@@ -239,7 +238,7 @@ export const HospitalRegisterView = () => {
               </div>
             </div>
 
-            {/* Zero Raw Egress Guarantee */}
+            {/* Data-locality note */}
             <div style={{
               background: 'rgba(16, 185, 129, 0.05)',
               border: '1px solid var(--status-healthy-border)',
@@ -251,7 +250,7 @@ export const HospitalRegisterView = () => {
             }}>
               <ShieldCheck size={18} color="var(--status-healthy)" style={{ marginTop: '2px', flexShrink: 0 }} />
               <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
-                <strong style={{ color: 'var(--status-healthy)' }}>Statutory Hospital Boundary Guarantee:</strong> Enrolling your hospital node guarantees that local DICOM image repositories and patient records will strictly remain inside your hospital firewall. Only aggregated differential-privacy weight updates will be communicated during training sessions.
+                <strong style={{ color: 'var(--status-healthy)' }}>Data locality:</strong> Datasets are inspected, preprocessed and trained on this hospital's machine. During federated training only model parameter updates and summary metrics are sent to the central server; raw images are not uploaded.
               </div>
             </div>
 

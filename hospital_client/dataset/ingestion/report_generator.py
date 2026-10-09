@@ -34,6 +34,14 @@ def generate_reports(profile: DatasetProfile, output_dir: str):
             f.write(f"## Class Information\n")
             f.write(f"- **Classes**: {profile.classes}\n")
             f.write(f"- **Splits Detected**: {profile.splits.get('detected_splits', [])}\n\n")
+            if profile.label_source:
+                ls = profile.label_source
+                f.write(f"## Labels From Metadata CSV\n")
+                f.write(f"- **CSV**: {os.path.basename(ls['csv_path'])}\n")
+                f.write(f"- **Columns**: image `{ls['image_column']}`, label `{ls['label_column']}`, group `{ls.get('group_column')}`\n")
+                f.write(f"- **Label map**: {ls.get('label_map')}\n")
+                f.write(f"- **Class distribution**: {profile.class_distribution}\n")
+                f.write(f"```json\n{json.dumps(ls['summary'], indent=2)}\n```\n\n")
             
         elif profile.dataset_type in ["CSV", "Excel"]:
             f.write(f"## Tabular Statistics\n")

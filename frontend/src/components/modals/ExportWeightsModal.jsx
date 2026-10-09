@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { useApp } from '../../context/AppContext';
+import MockBanner from '../common/MockBanner';
+import { useUiStore } from '../../stores/uiStore';
 import { Download, X, KeyRound, Check, FileCheck } from 'lucide-react';
 
 export const ExportWeightsModal = () => {
-  const { activeModal, setActiveModal } = useApp();
+  const { activeModal, setActiveModal } = useUiStore();
   const [signed, setSigned] = useState(false);
 
   if (activeModal !== 'exportWeights') return null;
@@ -25,6 +26,7 @@ export const ExportWeightsModal = () => {
         </div>
 
         <div className="modal-body">
+          <div style={{ marginBottom: '12px' }}><MockBanner module="Model export (Module 15) and differential privacy (Module 10)" /></div>
           <div style={{
             background: 'rgba(37, 99, 235, 0.08)',
             border: '1px solid rgba(37, 99, 235, 0.25)',
@@ -99,12 +101,9 @@ export const ExportWeightsModal = () => {
           </button>
           <button 
             className="btn btn-primary" 
-            disabled={!signed}
-            style={{ opacity: signed ? 1 : 0.5, cursor: signed ? 'pointer' : 'not-allowed' }}
-            onClick={() => {
-              alert('Weights exported successfully: EfficientNet-B0-FL_v2.4_checkpoint.pt (184.2 MB). Cryptographic audit receipt recorded.');
-              setActiveModal(null);
-            }}
+            disabled
+            title="Model export belongs to Module 15, which is not implemented"
+            style={{ opacity: 0.5, cursor: 'not-allowed' }}
           >
             <FileCheck size={13} />
             <span>Download Checkpoint (.pt)</span>

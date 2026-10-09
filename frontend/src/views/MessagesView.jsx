@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
+import MockBanner from '../components/common/MockBanner';
+import { useCurrentUser } from '../stores/authStore';
 import {
   MessageSquare,
   Lock,
@@ -16,7 +17,7 @@ import {
 } from 'lucide-react';
 
 export const MessagesView = () => {
-  const { currentUser } = useApp();
+  const currentUser = useCurrentUser();
   const [activeChannel, setActiveChannel] = useState('kyoto');
   const [inputText, setInputText] = useState('');
   const [messages, setMessages] = useState([
@@ -74,7 +75,9 @@ export const MessagesView = () => {
   };
 
   return (
-    <div style={{ height: '100%', display: 'grid', gridTemplateColumns: '240px 1fr 280px', overflow: 'hidden' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div style={{ padding: '8px 12px 0' }}><MockBanner module="Messaging (Module 18)" /></div>
+    <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '240px 1fr 280px', overflow: 'hidden' }}>
       {/* Left Channel Sidebar */}
       <div style={{
         background: 'var(--bg-sidebar)',
@@ -386,6 +389,7 @@ export const MessagesView = () => {
           </div>
         </div>
       </div>
+    </div>
     </div>
   );
 };

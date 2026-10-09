@@ -1,27 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { useApp } from '../context/AppContext';
-import modelService from '../services/modelService';
+import { useUiStore } from '../stores/uiStore';
+import { useMLStore } from '../stores/mlStore';
 import PrivacyNotice from '../components/common/PrivacyNotice';
 import { Box, CheckCircle, ShieldCheck, Info, Search } from 'lucide-react';
 
 const keyOf = (m) => `${m.model_id}@v${m.version}`;
 
 const ModelsView = () => {
-  const { setActiveTab } = useApp();
-  const [models, setModels] = useState([]);
+  const setActiveTab = useUiStore((s) => s.setActiveScreen);
+  const { data: models, status, error } = useMLStore((s) => s.models);
+  const refreshModels = useMLStore((s) => s.refreshModels);
+  const loading = status === 'idle' || (status === 'loading' && models.length === 0);
   const [selectedKey, setSelectedKey] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
 
+  useEffect(() => { refreshModels(); }, [refreshModels]);
   useEffect(() => {
-    modelService.getLocalModels()
-      .then((list) => {
-        setModels(list);
-        if (list.length > 0) setSelectedKey(keyOf(list[0]));
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, []);
+    if (!selectedKey && models.length > 0) setSelectedKey(keyOf(models[0]));
+  }, [models, selectedKey]);
 
   const selectedModel = models.find((m) => keyOf(m) === selectedKey);
 

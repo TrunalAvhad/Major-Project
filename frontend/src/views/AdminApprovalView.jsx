@@ -1,30 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { apiService } from '../services/apiService';
+import { useAdminStore } from '../stores/adminStore';
 import { CheckCircle2, XCircle, Clock, ShieldCheck, UserCheck, AlertCircle, RefreshCw } from 'lucide-react';
+import { useConfirm } from '../components/common/ConfirmDialog';
 
 export const AdminApprovalView = () => {
-  const [pendingResearchers, setPendingResearchers] = useState([]);
-  const [allResearchers, setAllResearchers] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { pendingResearchers: pendingRes, researchers: allRes, loadResearchers, approveResearcher, rejectResearcher } = useAdminStore();
+  const pendingResearchers = pendingRes.data || [];
+  const allResearchers = allRes.data || [];
+  const loading = [pendingRes, allRes].some((r) => r.status === 'idle' || r.status === 'loading');
   const [actionLoading, setActionLoading] = useState(null);
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
+  const [confirmDialog, confirm] = useConfirm();
 
   const fetchData = async () => {
-    setLoading(true);
     setError(null);
-    try {
-      const [pending, all] = await Promise.all([
-        apiService.getPendingResearchers().catch(() => []),
-        apiService.getAllResearchers().catch(() => [])
-      ]);
-      setPendingResearchers(pending || []);
-      setAllResearchers(all || []);
-    } catch (err) {
-      setError(err.message || 'Failed to load researcher records');
-    } finally {
-      setLoading(false);
-    }
+    await loadResearchers();
   };
 
   useEffect(() => {
@@ -35,9 +26,8 @@ export const AdminApprovalView = () => {
     setActionLoading(userId);
     setMessage(null);
     try {
-      await apiService.approveResearcher(userId);
+      await approveResearcher(userId);
       setMessage(`Researcher ${userId} successfully approved.`);
-      await fetchData();
     } catch (err) {
       setError(err.message || 'Failed to approve researcher');
     } finally {
@@ -46,13 +36,17 @@ export const AdminApprovalView = () => {
   };
 
   const handleReject = async (userId) => {
-    if (!window.confirm('Are you sure you want to reject this researcher application?')) return;
+    if (!(await confirm({
+      title: 'Reject this researcher application?',
+      message: `Account ${userId} will be rejected and cannot sign in.`,
+      confirmLabel: 'Reject',
+      danger: true,
+    }))) return;
     setActionLoading(userId);
     setMessage(null);
     try {
-      await apiService.rejectResearcher(userId);
+      await rejectResearcher(userId);
       setMessage(`Researcher ${userId} application rejected.`);
-      await fetchData();
     } catch (err) {
       setError(err.message || 'Failed to reject researcher');
     } finally {
@@ -62,6 +56,7 @@ export const AdminApprovalView = () => {
 
   return (
     <div style={{ padding: '24px', height: '100%', overflowY: 'auto' }}>
+      {confirmDialog}
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <div>

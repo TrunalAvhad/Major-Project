@@ -31,6 +31,8 @@ const initSocket = (httpServer) => {
 
     // Join a general room based on role
     socket.join(socket.user.role);
+    // Hospital operators also get their hospital's notifications (Module 18).
+    if (socket.user.hospital_id) socket.join(`hospital_${socket.user.hospital_id}`);
     
     // Allow users to join request-specific rooms
     // E.g., for model training lifecycle

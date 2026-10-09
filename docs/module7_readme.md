@@ -1,5 +1,14 @@
 # Module 7: Local Deep Learning Training
 
+## At a glance
+- **One trainer for every model:** `Trainer` asks Module 6 to `build_model(config)` and then runs the same loop for any of the 8 architectures: forward, cross-entropy, backward, optimizer step. Module 8 decides the architecture and sizes; Module 7 only executes them.
+- **Data:** Module 5 manifests. Each image is converted to the colour mode, resized to the model's input size, and turned into a tensor scaled 0-1 (no mean/std normalisation). Flip/rotation augmentation applies to the training split only, and only if Module 5 requested it.
+- **Defaults used by the app:** Adam, learning rate 1e-3, no scheduler, no class weighting, no early stopping, seed 42. fp16 + gradient scaling on CUDA when Module 8 picks it.
+- **Checkpoint choice:** a new version is saved whenever the validation loss reaches a new minimum, so the final model is the best epoch. The test split is evaluated once at the end and never used to choose.
+- **Metrics:** accuracy, macro precision/recall/F1, per-class metrics, confusion matrix. Test only: ROC-AUC (macro), average precision, and confusion/ROC/PR plots.
+- **Federated runs:** load and checksum-verify the round's base model, use the job's class mapping, and write a `FederationHandoff` (`.npz` parameters + JSON metadata).
+- **Plain-language guide:** [README.md](README.md) section 5.4.
+
 ## 1. Purpose
 
 Module 7 is the hospital/local-side **local deep learning training engine**.

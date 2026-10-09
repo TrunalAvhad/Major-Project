@@ -1,154 +1,86 @@
-import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
+import React from 'react';
+import { useAuthStore, selectHospitalId, selectHospitalName } from '../stores/authStore';
+import { useMLStore } from '../stores/mlStore';
 import PrivacyNotice from '../components/common/PrivacyNotice';
-import { Settings, ShieldCheck, Server, HardDrive, CheckCircle } from 'lucide-react';
+import { ChangePasswordForm } from '../components/common/Account';
+import { Settings, Server, HardDrive, RefreshCw } from 'lucide-react';
 
+const mb = (v) => (typeof v === 'number' ? `${(v / 1024).toFixed(1)} GB` : '-');
+
+/** Hospital workstation: account identity, the hardware Module 8 measured, and password change. */
 const SettingsView = () => {
-  const { hospitalId, hospitalName, user, hardware } = useApp();
-  const [cudaDevice, setCudaDevice] = useState('cuda:0 (NVIDIA RTX 3080 Ti)');
-  const [maxVramAlloc, setMaxVramAlloc] = useState('10240');
-  const [saved, setSaved] = useState(false);
+  const user = useAuthStore((s) => s.user);
+  const hospitalId = useAuthStore(selectHospitalId);
+  const hospitalName = useAuthStore(selectHospitalName);
+  const { hardware, hardwareError, refreshHardware, serviceStatus } = useMLStore();
+  const gpu = hardware?.gpu;
 
-  const handleSave = (e) => {
-    e.preventDefault();
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
+  const rows = hardware ? [
+    ['GPU', gpu?.cuda_available ? `${gpu.gpu_name} (CUDA ${gpu.cuda_capability})` : `None usable: ${gpu?.fallback_reason || 'no CUDA device'}`],
+    ['VRAM free / total', gpu?.cuda_available ? `${mb(gpu.free_vram_mb)} / ${mb(gpu.total_vram_mb)}` : '-'],
+    ['CPU', `${hardware.cpu?.processor || '-'} · ${hardware.cpu?.physical_cores ?? '-'} cores / ${hardware.cpu?.logical_cores ?? '-'} threads`],
+    ['RAM available / total', `${mb(hardware.ram?.available_mb)} / ${mb(hardware.ram?.total_mb)}`],
+    ['Disk free / total', hardware.storage ? `${mb(hardware.storage.free_mb)} / ${mb(hardware.storage.total_mb)}` : '-'],
+  ] : [];
 
   return (
     <div style={{ padding: '20px', overflowY: 'auto', height: '100%' }}>
-      {/* Privacy Notice */}
       <PrivacyNotice />
 
-      {/* Header */}
       <div className="card" style={{ marginBottom: '16px' }}>
         <div className="card-title">
           <Settings size={18} color="var(--accent-teal)" />
-          <span>Hospital Workstation Node Configuration</span>
+          <span>Hospital Workstation</span>
         </div>
         <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-          Manage local compute allocation, CUDA stream parameters, and facility compliance locks.
+          Account details and the hardware Module 8 measured on this machine. Training settings are chosen per run on the Start Training page.
         </p>
       </div>
 
-      <div style={{ maxWidth: '680px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        {/* Hospital Identity Profile */}
+      <div style={{ maxWidth: '760px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
         <div className="card">
           <div className="card-title">
             <Server size={15} color="var(--brand-blue)" />
-            <span>Facility Node Identity</span>
+            <span>Hospital &amp; operator</span>
           </div>
-
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', fontSize: '12px' }}>
-            <div>
-              <span className="text-muted">Node Identifier:</span>
-              <div className="font-mono text-cyan" style={{ fontWeight: 600 }}>{hospitalId}</div>
-            </div>
-            <div>
-              <span className="text-muted">Hospital Name:</span>
-              <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{hospitalName}</div>
-            </div>
-            <div>
-              <span className="text-muted">Operator Account:</span>
-              <div style={{ color: 'var(--text-primary)' }}>{user?.name} ({user?.email})</div>
-            </div>
-            <div>
-              <span className="text-muted">Consortium Status:</span>
-              <div><span className="badge badge-healthy">ACTIVE NODE</span></div>
-            </div>
+            <div><span className="text-muted">Hospital ID:</span><div className="font-mono text-cyan" style={{ fontWeight: 600 }}>{hospitalId}</div></div>
+            <div><span className="text-muted">Hospital name:</span><div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{hospitalName}</div></div>
+            <div><span className="text-muted">Operator:</span><div style={{ color: 'var(--text-primary)' }}>{user?.name} ({user?.email})</div></div>
+            <div><span className="text-muted">Account status:</span><div><span className="badge badge-healthy">{user?.status}</span></div></div>
           </div>
         </div>
 
-        {/* Compute & CUDA Parameters */}
-        <form onSubmit={handleSave} className="card">
-          <div className="card-title">
-            <HardDrive size={15} color="var(--accent-teal)" />
-            <span>Local Compute & Memory Allocation</span>
-          </div>
-
-          <div style={{ marginBottom: '14px' }}>
-            <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-              Target CUDA Device
-            </label>
-            <select
-              value={cudaDevice}
-              onChange={(e) => setCudaDevice(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                backgroundColor: '#090d16',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                color: 'var(--text-primary)',
-                fontSize: '12px',
-                outline: 'none'
-              }}
-            >
-              <option value="cuda:0 (NVIDIA RTX 3080 Ti)">cuda:0 (NVIDIA GeForce RTX 3080 Ti 12GB)</option>
-              <option value="cpu">CPU Fallback (AMD Ryzen 9 5950X - Non-accelerated)</option>
-            </select>
-          </div>
-
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-              Maximum VRAM Allocation Limit (MB)
-            </label>
-            <input
-              type="number"
-              value={maxVramAlloc}
-              onChange={(e) => setMaxVramAlloc(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                backgroundColor: '#090d16',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                color: 'var(--text-primary)',
-                fontSize: '12px',
-                fontFamily: 'var(--font-mono)',
-                outline: 'none'
-              }}
-            />
-            <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px' }}>
-              Reserved for Module 7 PyTorch process. 2 GB is preserved for display buffer and host OS.
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">
+              <HardDrive size={15} color="var(--accent-teal)" />
+              <span>Measured hardware (Module 8)</span>
             </div>
-          </div>
-
-          {/* Hard-locked Privacy Policy */}
-          <div style={{
-            padding: '12px',
-            backgroundColor: '#0a1422',
-            border: '1px solid rgba(16, 185, 129, 0.3)',
-            borderRadius: 'var(--radius-md)',
-            marginBottom: '16px',
-            fontSize: '11px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px'
-          }}>
-            <ShieldCheck size={18} color="var(--status-healthy)" />
-            <div>
-              <div style={{ fontWeight: 600, color: 'var(--status-healthy)' }}>
-                Zero Raw Data Egress Hard-Lock (Immutable)
-              </div>
-              <div style={{ color: 'var(--text-muted)' }}>
-                Hardware firewall lock prevents outgoing raw image sockets. Controlled by HIPAA compliance daemon.
-              </div>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            {saved ? (
-              <span className="badge badge-healthy">
-                <CheckCircle size={11} /> Preferences Saved Locally
-              </span>
-            ) : <span />}
-
-            <button type="submit" className="btn btn-teal">
-              Save Workstation Preferences
+            <button className="btn btn-secondary" style={{ fontSize: '11px', padding: '4px 8px' }} onClick={refreshHardware} disabled={serviceStatus !== 'online'}>
+              <RefreshCw size={12} /> <span>Re-measure</span>
             </button>
           </div>
-        </form>
+          {hardware ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '6px 16px', fontSize: '12px' }}>
+              {rows.map(([k, v]) => (
+                <React.Fragment key={k}>
+                  <span className="text-muted">{k}</span>
+                  <span className="font-mono">{v}</span>
+                </React.Fragment>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+              {hardwareError || (serviceStatus === 'online' ? 'Measuring...' : 'The local ML service is not reachable, so the hardware has not been measured.')}
+            </div>
+          )}
+          <p style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '10px' }}>
+            Module 8 sizes batch size and memory use from these measurements for every run; there is no manual VRAM limit to set.
+          </p>
+        </div>
+
+        <ChangePasswordForm />
       </div>
     </div>
   );

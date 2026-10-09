@@ -1,5 +1,21 @@
 # Module 6: Model Management
 
+## At a glance
+- **Job:** define every supported model and store trained versions safely.
+- **Architectures (8, one registry):**
+
+  | Tier | Models |
+  |---|---|
+  | High-end | ViT-B/16, EfficientNet-B4 |
+  | Medium | EfficientNet-B0, ResNet-50 |
+  | Low | ResNet-18, MobileNetV2 |
+  | Very low | MobileNetV3-Small, MobileViT-XXS |
+
+  Adding a model = one factory function + one registry entry.
+- **How a model is fitted to a task:** the backbone is built, then its final classification layer is replaced with one sized to the dataset's number of classes. The first convolution is adapted for grayscale. Pretrained weights are supported only from a local copy; the app trains from scratch.
+- **Storage:** `models/<model_id>/v<N>/model.safetensors` + `metadata.json`. Versions are immutable and never pickled. Every load checks the SHA-256 hash, the architecture, and the layer names and shapes.
+- **Plain-language guide (including how one trainer uses this registry for every model):** [README.md](README.md) sections 5.3-5.4.
+
 **Secure and Privacy-Preserving Federated Deep Learning Training Platform for Medical Imaging**
 
 - **Module:** 6

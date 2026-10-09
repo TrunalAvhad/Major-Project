@@ -1,5 +1,8 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import { useUiStore } from '../../stores/uiStore';
+import { useAuthStore, selectRole } from '../../stores/authStore';
+import { useMockStore } from '../../stores/mockStore';
+import { useCurrentUser } from '../../stores/authStore';
 import {
   LayoutDashboard,
   Building2,
@@ -20,16 +23,12 @@ import {
 } from 'lucide-react';
 
 export const Sidebar = () => {
-  const {
-    activeScreen,
-    setActiveScreen,
-    userRole,
-    setActiveModal,
-    currentUser,
-    notificationsCount,
-    messagesCount,
-    logout
-  } = useApp();
+  const { activeScreen, setActiveScreen, setActiveModal } = useUiStore();
+  const userRole = useAuthStore(selectRole);
+  const logout = useAuthStore((s) => s.logout);
+  const currentUser = useCurrentUser();
+  const notificationsCount = useMockStore((s) => s.notificationsCount);
+  const messagesCount = useMockStore((s) => s.messagesCount);
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -84,7 +83,7 @@ export const Sidebar = () => {
             </div>
           </div>
 
-          {/* Zero-Raw-Data Strict Mode Indicator */}
+          {/* Data-locality indicator */}
           <div style={{
             background: 'rgba(16, 185, 129, 0.08)',
             border: '1px solid var(--status-healthy-border)',
@@ -96,7 +95,7 @@ export const Sidebar = () => {
           }}>
             <span className="pulse-dot healthy" />
             <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--status-healthy)', letterSpacing: '0.02em' }}>
-              Zero-Raw-Data: ENFORCED
+              Raw data stays at hospitals
             </span>
           </div>
 
@@ -221,7 +220,7 @@ export const Sidebar = () => {
             border: '1px solid var(--border-strong)',
             overflow: 'hidden'
           }}>
-            <span style={{ fontWeight: '600', fontSize: '11px', color: '#ffffff' }}>ER</span>
+            <span style={{ fontWeight: '600', fontSize: '11px', color: '#ffffff' }}>{currentUser.initials}</span>
           </div>
           <div style={{ overflow: 'hidden' }}>
             <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-primary)', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
@@ -234,7 +233,7 @@ export const Sidebar = () => {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '10px', fontSize: '10px', color: 'var(--text-muted)' }}>
-          <span className="font-mono">⏱ {currentUser.sessionDuration}</span>
+          <span className="font-mono">{currentUser.account_id || currentUser.user_id}</span>
           <button
             onClick={() => logout()}
             style={{

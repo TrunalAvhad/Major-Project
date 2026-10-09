@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
+import MockBanner from '../components/common/MockBanner';
+import { useUiStore } from '../stores/uiStore';
 import {
   Layers,
   AlertTriangle,
@@ -17,11 +18,12 @@ import {
 } from 'lucide-react';
 
 export const StatesDemoView = () => {
-  const { setActiveModal, userRole, setUserRole } = useApp();
+  const setActiveModal = useUiStore((s) => s.setActiveModal);
   const [activeTab, setActiveTab] = useState('loading');
 
   return (
     <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <MockBanner>UI-states gallery for design review; every value here is made up</MockBanner>
       {/* Header */}
       <div>
         <div className="badge badge-purple" style={{ marginBottom: '4px' }}>
@@ -108,7 +110,7 @@ export const StatesDemoView = () => {
             <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '6px', lineHeight: 1.4 }}>
               No federated deep learning trials are currently running in this consortium workspace. Configure hyperparameters and enroll partner hospitals to begin training.
             </p>
-            <button className="btn btn-primary" style={{ marginTop: '14px' }} onClick={() => alert('Opening Setup Wizard')}>
+            <button className="btn btn-primary" style={{ marginTop: '14px' }} disabled title="Not implemented yet (mock screen)">
               + Setup New Federated Trial
             </button>
           </div>

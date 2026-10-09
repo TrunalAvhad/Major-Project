@@ -2,6 +2,7 @@ const User = require('../models/User');
 const TrainingRequest = require('../../models/TrainingRequest');
 const StoredModel = require('../../models/StoredModel');
 const Hospital = require('../models/Hospital');
+const AuditLog = require('../models/AuditLog');
 const AuditService = require('../services/auditService');
 const { ROLES } = require('../permissions/roles');
 
@@ -110,6 +111,65 @@ const getAllResearchers = async (req, res) => {
 };
 
 /**
+ * Returns every account (no password data), optionally filtered by ?role= and ?status=,
+ * with the hospital name for hospital operators.
+ */
+const getAllUsers = async (req, res) => {
+  try {
+    const filter = {};
+    if (Object.values(ROLES).includes(req.query.role)) filter.role = req.query.role;
+    if (typeof req.query.status === 'string' && req.query.status) filter.status = req.query.status;
+
+    const users = await User.find(filter)
+      .select('user_id account_id name email role hospital_id status created_at last_login_at')
+      .sort({ created_at: -1 })
+      .lean();
+    const hospitals = await Hospital.find({ hospital_id: { $in: users.map((u) => u.hospital_id).filter(Boolean) } })
+      .select('hospital_id name').lean();
+    const names = new Map(hospitals.map((h) => [h.hospital_id, h.name]));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        users: users.map(({ _id, ...u }) => ({ ...u, hospital_name: names.get(u.hospital_id) || null }))
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: error.message }
+    });
+  }
+};
+
+/**
+ * Audit trail, newest first. Filters: ?action=, ?user_id=, ?hospital_id=, ?limit= (default 200, max 1000).
+ * Entries are written by AuditService, which strips passwords/tokens from metadata.
+ */
+const getAuditLogs = async (req, res) => {
+  try {
+    const filter = {};
+    for (const key of ['action', 'user_id', 'hospital_id']) {
+      if (typeof req.query[key] === 'string' && req.query[key]) filter[key] = req.query[key];
+    }
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 200, 1), 1000);
+
+    const logs = await AuditLog.find(filter)
+      .select('-_id -__v')
+      .sort({ timestamp: -1 })
+      .limit(limit)
+      .lean();
+
+    res.status(200).json({ success: true, data: { logs } });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: error.message }
+    });
+  }
+};
+
+/**
  * Returns distinct diseases from stored requests and models
  * Dynamic list so any disease added appears automatically
  */
@@ -122,7 +182,7 @@ const getDiseases = async (req, res) => {
     res.status(200).json({
       success: true,
       data: {
-        diseases: combined.length > 0 ? combined : ['Malaria', 'Pneumonia', 'COVID-19', 'Diabetic Retinopathy']
+        diseases: combined
       }
     });
   } catch (error) {
@@ -283,6 +343,8 @@ module.exports = {
   suspendUser,
   getPendingResearchers,
   getAllResearchers,
+  getAllUsers,
+  getAuditLogs,
   getDiseases,
   getModelReport,
   getStoredModels,

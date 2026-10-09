@@ -1,13 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { getJobs, createJob, createRound, aggregateRound } from '../services/federationService';
+import { useFederationStore, COLLECTING } from '../stores/federationStore';
 import { Network, Plus, CheckCircle, RefreshCw } from 'lucide-react';
+import { useConfirm } from '../components/common/ConfirmDialog';
+import { Notice } from '../components/common/Notice';
+import { useAggregateRound } from '../components/federation/AggregateRoundDialog';
 
 export const FederatedTrainingView = () => {
 
-  const [jobs, setJobs] = useState([]);
-  const [architectures, setArchitectures] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const {
+    jobs: jobsResource, architectures: archResource, loadJobs, loadArchitectures,
+    createJob, createRound, deleteJob, deleteRound, hospitalNames,
+  } = useFederationStore();
+  const [aggregateDialog, startAggregate] = useAggregateRound();
+  const jobs = jobsResource.data;
+  const architectures = archResource.data;
+  const loading = jobsResource.status === 'idle' || (jobsResource.status === 'loading' && jobs.length === 0);
+  const error = jobsResource.error || archResource.error;
+  const [confirmDialog, confirm] = useConfirm();
+  const [message, setMessage] = useState(null);   // { tone: 'success' | 'error', text } from the last action
   
   // Create Job Form
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -20,37 +30,44 @@ export const FederatedTrainingView = () => {
     minimum_participants: 2
   });
 
-  const loadJobsAndArchs = async () => {
-    setLoading(true);
-    setError(null);
+  // Open-round form: one job at a time; the deadline input is local time.
+  const [roundForm, setRoundForm] = useState(null);
+  const toLocalInput = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const nextRoundNumber = (job) => Math.max(0, ...(job.rounds || []).map((r) => r.round_number)) + 1;
+  const roundInProgress = (job) => (job.rounds || []).some((r) => [...COLLECTING, 'CREATED', 'AGGREGATING'].includes(r.status));
+
+  const handleCreateRound = async (e, job) => {
+    e.preventDefault();
+    const n = nextRoundNumber(job);
+    setMessage(null);
     try {
-      const [resJobs, resArchs] = await Promise.all([
-        getJobs(),
-        import('../services/federationService').then(m => m.getArchitectures())
-      ]);
-      
-      if (resArchs.success) {
-        setArchitectures(resArchs.architectures);
-        if (resArchs.architectures.length > 0 && !newJob.architecture) {
-          setNewJob(prev => ({ ...prev, architecture: resArchs.architectures[0].name }));
-        }
-      }
-      
-      if (resJobs.success) {
-        setJobs(resJobs.jobs);
-      } else {
-        setError(resJobs.error);
-      }
+      const res = await createRound({
+        job_id: job.federation_job_id,
+        round_id: `${job.federation_job_id}_R${n}`,
+        round_number: n,
+        deadline: new Date(roundForm.deadline).toISOString(),
+        minimum_participants: Number(roundForm.minimum_participants),
+      });
+      setRoundForm(null);
+      const from = res.base_model_source === 'seed' ? 'a new seed model' : res.base_model_source === 'provided' ? 'the given base model' : `global model ${res.base_model_source}`;
+      setMessage({ tone: 'success', text: `Round ${n} is open. Hospitals start from ${from}.` });
     } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+      setMessage({ tone: 'error', text: `Error opening round: ${err.message}` });
     }
   };
+
+  const loadJobsAndArchs = () => Promise.all([loadJobs(), loadArchitectures()]);
 
   useEffect(() => {
     loadJobsAndArchs();
   }, []);
+
+  // Default the form's architecture to the first one the registry offers.
+  useEffect(() => {
+    if (architectures.length > 0 && !architectures.some((a) => a.name === newJob.architecture)) {
+      setNewJob((prev) => ({ ...prev, architecture: architectures[0].name }));
+    }
+  }, [architectures]);
 
   const handleCreateJob = async (e) => {
     e.preventDefault();
@@ -70,59 +87,44 @@ export const FederatedTrainingView = () => {
         class_mapping
       });
       setShowCreateForm(false);
-      loadJobsAndArchs();
+      setMessage({ tone: 'success', text: `Federation job ${newJob.job_id} created.` });
     } catch (err) {
-      alert("Error creating job: " + err.message);
+      setMessage({ tone: 'error', text: `Error creating job: ${err.message}` });
     }
   };
 
-  const handleAggregate = async (jobId, roundId) => {
-    try {
-      await aggregateRound(jobId, roundId);
-      alert("Aggregation successful!");
-      loadJobsAndArchs();
-    } catch (err) {
-      alert("Error aggregating round: " + err.message);
-    }
+  // Deleting something with federation history archives/cancels it instead (Module 9 keeps the record).
+  const handleDelete = async ({ title, hasHistory, historyText, emptyText, archiveLabel, deleteLabel, run }) => {
+    const ok = await confirm({
+      title,
+      message: hasHistory ? historyText : emptyText,
+      confirmLabel: hasHistory ? archiveLabel : deleteLabel,
+      danger: true,
+    });
+    if (!ok) return;
+    setMessage(null);
+    try { await run(); } catch (err) { setMessage({ tone: 'error', text: err.message }); }
   };
 
-  const handleDeleteJob = async (job) => {
-    const hasHistory = job.rounds && job.rounds.some(r => r.accepted_participants.length > 0 || !['CREATED', 'OPEN', 'RECEIVING'].includes(r.status));
-    
-    let msg = `Delete Federation Job?\n\n${job.federation_job_id}\n\n`;
-    if (hasHistory) {
-      msg += `This federation job contains completed federation activity.\nIt cannot be permanently deleted.\nYou may archive/cancel it instead.`;
-    } else {
-      msg += `This job has no federation history.\nIt will be permanently removed.`;
-    }
-    
-    if (window.confirm(msg)) {
-      try {
-        const { deleteJob } = await import('../services/federationService');
-        await deleteJob(job.federation_job_id);
-        loadJobsAndArchs();
-      } catch (err) { alert(err.message); }
-    }
-  };
+  const handleDeleteJob = (job) => handleDelete({
+    title: `Delete federation job ${job.federation_job_id}?`,
+    hasHistory: job.rounds && job.rounds.some(r => r.accepted_participants.length > 0 || !['CREATED', 'OPEN', 'RECEIVING'].includes(r.status)),
+    historyText: 'This job has completed federation activity, so it cannot be permanently deleted; it will be archived/cancelled instead.',
+    emptyText: 'This job has no federation history and will be permanently removed.',
+    archiveLabel: 'Archive job',
+    deleteLabel: 'Delete job',
+    run: () => deleteJob(job.federation_job_id),
+  });
 
-  const handleDeleteRound = async (round) => {
-    const hasHistory = round.accepted_participants.length > 0 || !['CREATED', 'OPEN', 'RECEIVING'].includes(round.status);
-    
-    let msg = `Delete Round?\n\nRound ${round.round_number}\n\n`;
-    if (hasHistory) {
-      msg += `This round contains federation history and cannot be permanently deleted.\nCancel round?`;
-    } else {
-      msg += `This round has no submitted updates and can be permanently deleted.`;
-    }
-    
-    if (window.confirm(msg)) {
-      try {
-        const { deleteRound } = await import('../services/federationService');
-        await deleteRound(round.round_id);
-        loadJobsAndArchs();
-      } catch (err) { alert(err.message); }
-    }
-  };
+  const handleDeleteRound = (round) => handleDelete({
+    title: `Delete round ${round.round_number}?`,
+    hasHistory: round.accepted_participants.length > 0 || !['CREATED', 'OPEN', 'RECEIVING'].includes(round.status),
+    historyText: 'This round contains federation history and cannot be permanently deleted; it will be cancelled instead.',
+    emptyText: 'This round has no submitted updates and will be permanently deleted.',
+    archiveLabel: 'Cancel round',
+    deleteLabel: 'Delete round',
+    run: () => deleteRound(round.round_id),
+  });
 
   return (
     <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
@@ -139,11 +141,10 @@ export const FederatedTrainingView = () => {
         </div>
       </div>
 
-      {error && (
-        <div style={{ padding: '12px', background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid #ef4444', borderRadius: '4px', marginBottom: '16px' }}>
-          {error}
-        </div>
-      )}
+      {confirmDialog}
+      {aggregateDialog}
+      {error && <Notice tone="error" style={{ marginBottom: '16px' }}>{error}</Notice>}
+      {message && <Notice tone={message.tone} style={{ marginBottom: '16px' }}>{message.text}</Notice>}
 
       {showCreateForm && (
         <div className="card" style={{ padding: '16px', marginBottom: '20px' }}>
@@ -235,7 +236,37 @@ export const FederatedTrainingView = () => {
               </div>
 
               <div>
-                <h4 style={{ fontSize: '13px', color: '#cbd5e1', marginBottom: '8px' }}>Rounds</h4>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h4 style={{ fontSize: '13px', color: '#cbd5e1' }}>Rounds</h4>
+                  <button className="btn btn-primary" style={{ fontSize: '11px', padding: '4px 10px' }}
+                    disabled={roundInProgress(job) || roundForm?.jobId === job.federation_job_id}
+                    title={roundInProgress(job) ? 'Finish or delete the current round first' : undefined}
+                    onClick={() => setRoundForm({ jobId: job.federation_job_id, deadline: toLocalInput(new Date(Date.now() + 24 * 3600 * 1000)), minimum_participants: job.minimum_participants })}>
+                    <Plus size={12} /> Open round {nextRoundNumber(job)}
+                  </button>
+                </div>
+                {roundForm?.jobId === job.federation_job_id && (
+                  <form onSubmit={(e) => handleCreateRound(e, job)} style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '12px', padding: '12px', background: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                      Deadline (updates after it are rejected)
+                      <input type="datetime-local" required min={toLocalInput(new Date())} value={roundForm.deadline} onChange={(e) => setRoundForm({ ...roundForm, deadline: e.target.value })}
+                        style={{ padding: '6px 8px', background: 'var(--bg-nested)', color: '#fff', border: '1px solid var(--border-subtle)', borderRadius: '4px' }} />
+                    </label>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                      Minimum participants
+                      <input type="number" min="1" required value={roundForm.minimum_participants} onChange={(e) => setRoundForm({ ...roundForm, minimum_participants: e.target.value })}
+                        style={{ width: '120px', padding: '6px 8px', background: 'var(--bg-nested)', color: '#fff', border: '1px solid var(--border-subtle)', borderRadius: '4px' }} />
+                    </label>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', flex: 1, minWidth: '200px' }}>
+                      Every hospital starts from this job's latest global model, or from one shared freshly initialised model if there is none yet.
+                      They download it before training and check its checksum.
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button type="button" className="btn btn-secondary" onClick={() => setRoundForm(null)}>Cancel</button>
+                      <button type="submit" className="btn btn-primary">Open round</button>
+                    </div>
+                  </form>
+                )}
                 {job.rounds && job.rounds.length > 0 ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {job.rounds.map(round => (
@@ -245,14 +276,14 @@ export const FederatedTrainingView = () => {
                             <span style={{ fontWeight: 'bold', color: '#fff' }}>Round {round.round_number} ({round.round_id})</span>
                             <span style={{ marginLeft: '8px', fontSize: '12px', color: 'var(--text-muted)' }}>Status: {round.status}</span>
                             <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                              Base Model VERIFIED (ID: {round.base_model_id || 'N/A'})
+                              Base model: {round.base_model_id ? `${round.base_model_id} v${round.base_model_version}` : 'none'}
                             </div>
                             <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
                               Deadline: {round.deadline}
                             </div>
                           </div>
                           <div style={{ display: 'flex', gap: '6px' }}>
-                            <button className="btn btn-secondary" onClick={() => handleAggregate(job.federation_job_id, round.round_id)} disabled={round.status === 'COMPLETED'}>
+                            <button className="btn btn-secondary" onClick={() => { setMessage(null); startAggregate(job, round); }} disabled={!COLLECTING.includes(round.status)}>
                               Aggregate Round
                             </button>
                             <button className="btn btn-danger" onClick={() => handleDeleteRound(round)}>
@@ -269,7 +300,7 @@ export const FederatedTrainingView = () => {
                               const isRejected = round.rejected_participants.includes(pid);
                               return (
                                 <div key={idx} style={{ padding: '6px', background: 'rgba(255,255,255,0.02)', borderRadius: '4px', fontSize: '11px', display: 'flex', justifyContent: 'space-between' }}>
-                                  <span>{pid}</span>
+                                  <span>{hospitalNames[pid] ? `${hospitalNames[pid]} (${pid})` : pid}</span>
                                   {isAccepted ? <span style={{ color: 'var(--status-healthy)' }}>ACCEPTED ✓</span> : 
                                    isRejected ? <span style={{ color: '#ef4444' }}>REJECTED / EXPIRED</span> : 
                                    <span style={{ color: '#eab308' }}>WAITING</span>}

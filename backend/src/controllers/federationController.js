@@ -1,5 +1,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
+const Hospital = require('../authentication/models/Hospital');
+const { notifyHospitals } = require('../services/notificationService');
 
 const callPythonAdapter = (payload) => {
   return new Promise((resolve, reject) => {
@@ -54,6 +56,12 @@ exports.getArchitectures = async (req, res) => {
 exports.listJobs = async (req, res) => {
   try {
     const result = await callPythonAdapter({ action: 'list_jobs' });
+    // Admins see which hospital each participant id is; hospitals only get the ids.
+    if (req.user.role === 'admin') {
+      const ids = [...new Set((result.jobs || []).flatMap((j) => (j.rounds || []).flatMap((r) => r.expected_participants || [])))];
+      const hospitals = ids.length ? await Hospital.find({ hospital_id: { $in: ids } }, 'hospital_id name') : [];
+      result.hospital_names = Object.fromEntries(hospitals.map((h) => [h.hospital_id, h.name]));
+    }
     res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -90,9 +98,30 @@ exports.createJob = async (req, res) => {
 exports.createRound = async (req, res) => {
   try {
     const result = await callPythonAdapter({ action: 'create_round', ...req.body });
+    const rnd = result.round;
+    if (rnd) result.notified_hospitals = await notifyHospitals({
+      type: 'ROUND_OPEN',
+      title: `Round ${rnd.round_number} of ${rnd.federation_job_id} is open`,
+      content: `Federation job ${rnd.federation_job_id} opened round ${rnd.round_number}. It accepts model updates until ${rnd.deadline}. `
+        + 'To take part, start federated training for this job under Federation Status.',
+      job_id: rnd.federation_job_id, round_id: rnd.round_id,
+    });
     res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// Hospitals download the round's canonical base checkpoint (one of its two files) before local training.
+exports.downloadBaseModel = async (req, res) => {
+  try {
+    const result = await callPythonAdapter({ action: 'get_base_model', round_id: req.params.round_id });
+    if (!result.files.includes(req.params.file)) {
+      return res.status(404).json({ success: false, error: 'Unknown base model file.' });
+    }
+    res.sendFile(path.join(result.dir, req.params.file));
+  } catch (err) {
+    res.status(404).json({ success: false, error: err.message });
   }
 };
 
@@ -141,6 +170,16 @@ exports.submitUpdate = async (req, res) => {
 exports.aggregateRound = async (req, res) => {
   try {
     const result = await callPythonAdapter({ action: 'aggregate', ...req.body });
+    // Hospitals that never joined this round are told it is closed and not to start training for it.
+    const rnd = result.round;
+    if (rnd) result.notified_hospitals = await notifyHospitals({
+      exclude: rnd.expected_participants || [],
+      type: 'ROUND_CLOSED',
+      title: `Round ${rnd.round_number} of ${rnd.federation_job_id} is closed`,
+      content: `Round ${rnd.round_number} of federation job ${rnd.federation_job_id} stopped accepting updates and its aggregation has started. `
+        + 'Do not start federated training for this round. You will be notified when the next round opens.',
+      job_id: rnd.federation_job_id, round_id: rnd.round_id,
+    });
     res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

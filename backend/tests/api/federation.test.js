@@ -117,6 +117,13 @@ jest.mock('../../src/models/TrainingRequest', () => ({
   deleteMany: jest.fn().mockResolvedValue({}),
 }));
 
+// ── Mock Notification model (Module 18) ──────────────────────────────────────
+jest.mock('../../src/models/Notification', () => ({
+  insertMany: jest.fn(async (docs) => docs.map((d) => ({ ...d, toObject: () => d }))),
+  find: jest.fn(),
+  updateMany: jest.fn().mockResolvedValue({}),
+}));
+
 // ── Mock DB connection ────────────────────────────────────────────────────────
 jest.mock('../../src/database/connection/db', () => jest.fn().mockResolvedValue(true));
 
@@ -414,6 +421,139 @@ describe('POST /api/v1/federation/rounds', () => {
       .post('/api/v1/federation/rounds')
       .set('Authorization', `Bearer ${RESEARCHER()}`)
       .send({ job_id: 'JOB-001', round_id: 'RND-001', round_number: 1 });
+    expect(res.status).toBe(403);
+  });
+});
+
+// Makes the mocked Python adapter answer the next calls with `payload`.
+const adapterReturns = (payload) => {
+  const { spawn } = require('child_process');
+  const { EventEmitter } = require('events');
+  const { Readable } = require('stream');
+  spawn.mockImplementation(() => {
+    const child = new EventEmitter();
+    child.stdout = new Readable({ read() {} });
+    child.stderr = new Readable({ read() {} });
+    child.stdin = { write: jest.fn((d) => { lastSpawnPayload = JSON.parse(d); }), end: jest.fn() };
+    setImmediate(() => { child.stdout.push(JSON.stringify(payload)); child.stdout.push(null); child.emit('close', 0); });
+    return child;
+  });
+};
+
+describe('Round notifications and participant names (Module 18)', () => {
+  const Hospital = require('../../src/authentication/models/Hospital');
+  const Notification = require('../../src/models/Notification');
+  const ROUND = { round_id: 'R1', round_number: 1, federation_job_id: 'JOB1', deadline: '2099-01-01T00:00:00+00:00', expected_participants: ['HOSP-ALPHA'] };
+
+  test('Early aggregation passes force_close and notifies only hospitals that did not join', async () => {
+    adapterReturns({ success: true, global_model: { global_model_id: 'GM-1', version: 1 }, round: { ...ROUND, status: 'GLOBAL_MODEL_CREATED' } });
+    Hospital.find.mockResolvedValueOnce([{ hospital_id: 'HOSP-BETA' }]);
+    const res = await request(app)
+      .post('/api/v1/federation/rounds/aggregate')
+      .set('Authorization', `Bearer ${ADMIN()}`)
+      .send({ job_id: 'JOB1', round_id: 'R1', force_close: true });
+    expect(res.status).toBe(200);
+    expect(lastSpawnPayload).toMatchObject({ action: 'aggregate', round_id: 'R1', force_close: true });
+    expect(Hospital.find.mock.calls[0][0]).toEqual({ status: 'active', hospital_id: { $nin: ['HOSP-ALPHA'] } });
+    expect(Notification.insertMany.mock.calls[0][0]).toEqual([
+      expect.objectContaining({ hospital_id: 'HOSP-BETA', type: 'ROUND_CLOSED', job_id: 'JOB1', round_id: 'R1' }),
+    ]);
+    expect(res.body.notified_hospitals).toEqual(['HOSP-BETA']);
+  });
+
+  test('Failed aggregation notifies nobody', async () => {
+    adapterReturns({ success: false, error: 'Round R1 is not ready for aggregation' });
+    const res = await request(app)
+      .post('/api/v1/federation/rounds/aggregate')
+      .set('Authorization', `Bearer ${ADMIN()}`)
+      .send({ job_id: 'JOB1', round_id: 'R1', force_close: true });
+    expect(res.status).toBe(500);
+    expect(Notification.insertMany).not.toHaveBeenCalled();
+  });
+
+  test('Opening a round notifies every active hospital', async () => {
+    adapterReturns({ success: true, round: { ...ROUND, expected_participants: [] }, base_model_source: 'seed' });
+    Hospital.find.mockResolvedValueOnce([{ hospital_id: 'HOSP-ALPHA' }, { hospital_id: 'HOSP-BETA' }]);
+    const res = await request(app)
+      .post('/api/v1/federation/rounds')
+      .set('Authorization', `Bearer ${ADMIN()}`)
+      .send({ job_id: 'JOB1', round_id: 'R1', round_number: 1, deadline: ROUND.deadline });
+    expect(res.status).toBe(200);
+    expect(res.body.notified_hospitals).toEqual(['HOSP-ALPHA', 'HOSP-BETA']);
+    expect(Notification.insertMany.mock.calls[0][0][0]).toMatchObject({ type: 'ROUND_OPEN', round_id: 'R1' });
+  });
+
+  test('Admins get participant hospital names with the job list; hospitals do not', async () => {
+    adapterReturns({ success: true, jobs: [{ federation_job_id: 'JOB1', rounds: [ROUND] }] });
+    Hospital.find.mockResolvedValue([{ hospital_id: 'HOSP-ALPHA', name: 'Alpha General' }]);
+    const admin = await request(app).get('/api/v1/federation/jobs').set('Authorization', `Bearer ${ADMIN()}`);
+    expect(admin.body.hospital_names).toEqual({ 'HOSP-ALPHA': 'Alpha General' });
+    const hosp = await request(app).get('/api/v1/federation/jobs').set('Authorization', `Bearer ${HOSP_BETA()}`);
+    expect(hosp.body.hospital_names).toBeUndefined();
+    Hospital.find.mockResolvedValue([]);
+  });
+
+  test('A hospital reads and clears only its own notifications', async () => {
+    const lean = jest.fn().mockResolvedValue([{ notification_id: 'N1', hospital_id: 'HOSP-ALPHA' }]);
+    Notification.find.mockReturnValue({ sort: () => ({ limit: () => ({ select: () => ({ lean }) }) }) });
+    const res = await request(app).get('/api/v1/notifications').set('Authorization', `Bearer ${HOSP_ALPHA()}`);
+    expect(res.status).toBe(200);
+    expect(Notification.find).toHaveBeenCalledWith({ hospital_id: 'HOSP-ALPHA' });
+    expect(res.body.notifications).toHaveLength(1);
+
+    await request(app).post('/api/v1/notifications/read').set('Authorization', `Bearer ${HOSP_ALPHA()}`);
+    expect(Notification.updateMany).toHaveBeenCalledWith({ hospital_id: 'HOSP-ALPHA', read: false }, { read: true });
+  });
+
+  test('Researchers and admins have no hospital notifications → 403', async () => {
+    for (const token of [RESEARCHER(), ADMIN()]) {
+      const res = await request(app).get('/api/v1/notifications').set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(403);
+    }
+  });
+});
+
+describe('GET /api/v1/federation/rounds/:round_id/base-model/:file', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'm9-base-'));
+  fs.writeFileSync(path.join(dir, 'model.safetensors'), 'weights');
+  fs.writeFileSync(path.join(dir, 'secret.txt'), 'not served');
+
+  // The adapter answers get_base_model with the checkpoint folder and its two files.
+  beforeEach(() => adapterReturns({ success: true, dir, files: ['model.safetensors', 'metadata.json'] }));
+
+  test('Hospital downloads a checkpoint file of the round base model', async () => {
+    const res = await request(app)
+      .get('/api/v1/federation/rounds/R1/base-model/model.safetensors')
+      .set('Authorization', `Bearer ${HOSP_ALPHA()}`)
+      .buffer(true).parse((r, cb) => { let d = ''; r.on('data', (c) => { d += c; }); r.on('end', () => cb(null, d)); });
+    expect(res.status).toBe(200);
+    expect(res.body).toBe('weights');
+    expect(lastSpawnPayload).toEqual({ action: 'get_base_model', round_id: 'R1' });
+  });
+
+  test('Only the checkpoint files are served', async () => {
+    const res = await request(app)
+      .get('/api/v1/federation/rounds/R1/base-model/secret.txt')
+      .set('Authorization', `Bearer ${HOSP_ALPHA()}`);
+    expect(res.status).toBe(404);
+  });
+
+  test('Round without a base model → 404', async () => {
+    adapterReturns({ success: false, error: 'Round R9 has no base model.' });
+    const res = await request(app)
+      .get('/api/v1/federation/rounds/R9/base-model/model.safetensors')
+      .set('Authorization', `Bearer ${HOSP_ALPHA()}`);
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/no base model/);
+  });
+
+  test('Researcher → 403', async () => {
+    const res = await request(app)
+      .get('/api/v1/federation/rounds/R1/base-model/model.safetensors')
+      .set('Authorization', `Bearer ${RESEARCHER()}`);
     expect(res.status).toBe(403);
   });
 });

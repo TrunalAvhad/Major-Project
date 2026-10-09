@@ -5,6 +5,8 @@ const {
   suspendUser,
   getPendingResearchers,
   getAllResearchers,
+  getAllUsers,
+  getAuditLogs,
   getDiseases,
   getModelReport,
   getStoredModels,
@@ -23,6 +25,7 @@ router.use(requireAuth, requireRole(ROLES.ADMIN));
 // User & Researcher Approval Management
 router.get('/researchers/pending', getPendingResearchers);
 router.get('/researchers', getAllResearchers);
+router.get('/users', getAllUsers);
 router.post('/users/:user_id/approve', approveUser);
 router.post('/users/:user_id/reject', rejectUser);
 router.post('/users/:user_id/suspend', suspendUser);
@@ -32,5 +35,6 @@ router.get('/diseases', getDiseases);
 router.get('/reports', getModelReport);
 router.get('/stored-models', getStoredModels);
 router.get('/telemetry', getTelemetry);
+router.get('/audit-logs', getAuditLogs);
 
 module.exports = router;

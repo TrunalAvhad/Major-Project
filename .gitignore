@@ -133,6 +133,17 @@ demo_charts/
 # Local ML service outputs (hospital_client.local_api; default ML_WORK_DIR is ~/medfl_ml_work,
 # ignored here in case it is pointed inside the repo)
 medfl_ml_work/
+# Module 9 federation runtime state: SQLite metadata and model artifacts (hospital updates, round
+# base models, global models) created by running rounds. evaluation_datasets/ holds the admin's
+# evaluation images. NOTE: federation_metadata.db, federation_db.sqlite and a few files under
+# federation_artifacts/ were committed before this rule; ignoring does not untrack them. Untrack
+# once the team agrees: git rm -r --cached federation_artifacts federation_metadata.db federation_db.sqlite
+federation_metadata.db
+federation_db.sqlite
+federation_artifacts/
+evaluation_datasets/
+*.npz
+/dummy
 # Misnamed env files (Vite/dotenv only read .env) - never commit their secrets
 /backend/env
 /frontend/**/env

@@ -42,7 +42,9 @@ const TrainingMonitor = ({ job, onHalt, onViewResults }) => {
                 Model: <span className="font-mono text-cyan">{meta?.model_id}</span>
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                Dataset: <strong className="text-primary">{meta?.dataset_name}</strong> | Recommendation: <strong className="text-primary">{meta?.choice}</strong>
+                Dataset: <strong className="text-primary">{meta?.dataset_name}</strong> | {meta?.job_id
+                  ? <>Federation job: <strong className="text-primary">{meta.job_id}</strong></>
+                  : <>Recommendation: <strong className="text-primary">{meta?.choice}</strong></>}
                 {meta?.request_id && <> | Consortium request: <strong className="text-primary">{meta.request_id}</strong></>}
               </div>
             </div>

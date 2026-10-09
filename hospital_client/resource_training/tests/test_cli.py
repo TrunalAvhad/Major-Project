@@ -76,13 +76,19 @@ def test_cli_train_manual_architecture_batch_and_epochs(real_small_dataset_dir, 
     _run([
         "train", "--dataset", real_small_dataset_dir, "--output", output_dir,
         "--model-id", "manual_model", "--architecture", "mobilenet_v3_small", "--batch-size", "2", "--epochs", "1",
+        "--architecture-subdir",
     ], monkeypatch)
     out = capsys.readouterr().out
     assert "Chosen recommendation: Manual Configuration (mobilenet_v3_small)" in out
-    with open(tmp_path / "out" / "manual_model_training_result.json") as f:
+    run_dir = tmp_path / "out" / "mobilenet_v3_small"
+    with open(run_dir / "manual_model_training_result.json") as f:
         result = json.load(f)
     assert result["architecture"] == "mobilenet_v3_small" and result["epochs_run"] == 1
     assert result["training_configuration"]["batch_size"] == 2
+    assert (run_dir / "manual_model_resource_statistics.json").exists()
+    assert (run_dir / "models" / "manual_model").is_dir()             # Module 6 store is per architecture
+    assert not (tmp_path / "out" / "manual_model_training_result.json").exists()
+    assert (tmp_path / "out" / "resource_training_history.json").exists()  # shared across architectures
 
 
 def test_cli_recommend_includes_alternatives_and_batch_memory(real_small_dataset_dir, tmp_path, monkeypatch, capsys):

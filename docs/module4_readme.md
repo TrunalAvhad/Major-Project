@@ -1,5 +1,19 @@
 # Module 4: Dataset Ingestion and Inspection
 
+## At a glance
+- **Job:** describe a dataset before anything is done to it. It reads files only; it never modifies, moves or copies them.
+- **Inputs:** an image folder, or a CSV / XLS / XLSX file. Image labels come from class folder names, or from a metadata CSV (image-id column + label column + optional lesion/patient column + class mapping).
+- **Methods:**
+  - recursive folder walk;
+  - Pillow open + verify for every image;
+  - SHA-256 hashing for exact duplicates;
+  - `train/val/test` folder detection;
+  - class counts with an imbalance warning (largest class > 2x smallest);
+  - for tables: column typing, missing values, duplicate rows, constant and ID-like columns, candidate target columns (never chosen automatically).
+- **Output:** `dataset_profile.json` + `dataset_report.md`, with counts and names only (no pixels, no rows).
+- **Command:** `python -m hospital_client.dataset inspect <path> --output <dir> [--labels-csv ... --image-column ... --label-column ... --group-column ... --label-map ...]`
+- **Plain-language guide to the whole pipeline:** [README.md](README.md) section 5.1.
+
 ## 1. Module Overview
 - **Module Number:** 4
 - **Module Name:** Dataset Ingestion and Inspection
@@ -49,6 +63,19 @@ For image datasets, the system recursively discovers structures such as:
 - Unstructured flat directories.
 
 The implementation intelligently differentiates standard split keywords (`train`, `val`, `validation`, `test`) from target classes.
+
+### Labels from a metadata CSV (optional)
+Some image datasets are not sorted into class folders: all images sit in one folder and a CSV gives each image's class (for example ISIC: `train-metadata.csv` with an image-id column and a diagnosis/target column). For these, Module 4 takes the labels from the CSV instead of folder names (`ingestion/metadata_labels.py`):
+
+- **Image id column**: matched to image files by relative path, file name, or file name without extension (case-insensitive). An id that matches two files (e.g. `X.jpg` and `X.png`) is an error, not a guess.
+- **Label column**: each image's class. An optional **label map** `{"raw value": "class name"}` renames values or merges several into one class (e.g. `MEL` and `BCC` → `malignant`); a value mapped to `null` is excluded explicitly. With a map, every label value must be listed, so nothing is silently dropped.
+- **Group column (optional)**: a real lesion/patient id. Module 5 uses it for grouped splitting so one lesion/patient never spans two splits.
+- Class names must be letters, digits, space, `_`, `-`, `.` (max 64 characters) because Module 5 uses them as folder names.
+- Images with no CSV row or an empty label, images excluded by the map, and CSV rows with no matching image are counted in `label_source.summary` and reported as warnings; they are never given a label.
+- `train/`, `val/`, `test/` folders still mark existing splits; folder names no longer name classes.
+- The CSV is read in chunks (only the configured columns), and neither it nor the images are modified. The profile stores the CSV path, column names, label map and counts only.
+
+Folder-labelled datasets behave exactly as before; their profile has no `label_source` key.
 
 ## 5. Image Dataset Inspection
 - **Discovery:** Recursively walks directories.
@@ -115,6 +142,12 @@ python -m hospital_client.dataset inspect C:\Data\patients.csv --output C:\Repor
 
 # Excel Dataset
 python -m hospital_client.dataset inspect C:\Data\records.xlsx --output C:\Reports
+
+# Image folder labelled by a metadata CSV (ISIC-style), with lesion-level grouping
+python -m hospital_client.dataset inspect C:\Data\isic --output C:\Reports ^
+    --labels-csv C:\Data\isic\train-metadata.csv --image-column isic_id ^
+    --label-column diagnosis --group-column lesion_id ^
+    --label-map "{\"MEL\": \"malignant\", \"BCC\": \"malignant\", \"NV\": \"benign\", \"UNK\": null}"
 ```
 
 ## 12. Validation and Error Handling

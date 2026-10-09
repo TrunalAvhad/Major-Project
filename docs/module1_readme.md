@@ -381,11 +381,14 @@ Retrieve the authenticated user's profile.
       "email": "jane@hospital.org",
       "role": "hospital_operator",
       "hospital_id": "HOSP_000001",
+      "hospital_name": "St. Jude Clinical Research",
       "status": "active"
     }
   }
 }
 ```
+
+`hospital_name` is looked up from the `hospitals` collection (null for researchers/admins). The login response includes it too.
 
 **Possible errors:** `UNAUTHORIZED`, `INVALID_TOKEN`, `TOKEN_EXPIRED`
 
@@ -464,6 +467,26 @@ Suspend an active user account (sets status to `suspended`).
 - **Allowed roles:** `admin` only
 
 **Success/error format:** Same structure as approve.
+
+---
+
+### `GET /api/v1/admin/users`
+
+List every account, newest first (used by the admin User Management screen).
+
+- **Auth required:** Yes (`requireAuth`)
+- **Allowed roles:** `admin` only
+- **Query (optional):** `role` (`admin` | `researcher` | `hospital_operator`), `status`
+- **Returns:** `data.users[]` with `user_id, account_id, name, email, role, hospital_id, hospital_name, status, created_at, last_login_at`. Password fields are never selected.
+
+### `GET /api/v1/admin/audit-logs`
+
+Audit trail, newest first (used by the admin Audit Log screen).
+
+- **Auth required:** Yes (`requireAuth`)
+- **Allowed roles:** `admin` only
+- **Query (optional):** `action`, `user_id`, `hospital_id`, `limit` (default 200, max 1000)
+- **Returns:** `data.logs[]`. Entries are written by `AuditService`, which strips passwords and tokens from metadata.
 
 ---
 
@@ -780,6 +803,11 @@ Time:        7.959 s
 ```
 
 **Result: 29/29 tests passed ✅**
+
+The combined Modules 1-3 API suite `tests/api/module_1_2_3_full.test.js` (52 tests, including the
+`/admin/users`, `/admin/audit-logs` and `hospital_name` checks) also passes. Last full backend run
+(`npx jest`, 2026-10-09): 159 passed, 2 failed. The 2 failures are stale expectations in
+`federation.test.js`: they expect hospitals to be refused `GET /federation/jobs`, which hospitals are now allowed to call.
 
 ### Test Coverage
 

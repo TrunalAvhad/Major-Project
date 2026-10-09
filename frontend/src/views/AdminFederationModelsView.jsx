@@ -1,34 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { getGlobalModels, evaluateModel, promoteModel } from '../services/federationService';
+import { useFederationStore } from '../stores/federationStore';
 import {
   Cpu, Layers, ShieldCheck, RefreshCw, ChevronDown, ChevronRight,
   CheckCircle, XCircle, Award, ArrowUpCircle, Clock, AlertTriangle
 } from 'lucide-react';
 
 export const AdminFederationModelsView = () => {
-  const [models, setModels] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const { globalModels, loadGlobalModels: loadModels, evaluateModel, promoteModel } = useFederationStore();
+  const models = globalModels.data;
+  const loading = globalModels.status === 'idle' || globalModels.status === 'loading';
+  const error = globalModels.error;
   const [expandedModel, setExpandedModel] = useState(null);
   const [actionLoading, setActionLoading] = useState(null);
   const [actionError, setActionError] = useState(null);
-
-  const loadModels = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await getGlobalModels();
-      if (res.success) {
-        setModels(res.models || []);
-      } else {
-        setError(res.error || 'Failed to load models');
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => { loadModels(); }, []);
 
@@ -37,7 +21,6 @@ export const AdminFederationModelsView = () => {
     setActionError(null);
     try {
       await evaluateModel(globalModelId);
-      await loadModels();
     } catch (err) {
       setActionError(`Evaluation failed: ${err.message}`);
     } finally {
@@ -50,7 +33,6 @@ export const AdminFederationModelsView = () => {
     setActionError(null);
     try {
       await promoteModel(globalModelId, evalRecordId);
-      await loadModels();
     } catch (err) {
       setActionError(`Promotion failed: ${err.message}`);
     } finally {

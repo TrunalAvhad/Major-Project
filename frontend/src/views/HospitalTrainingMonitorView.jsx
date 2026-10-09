@@ -1,13 +1,13 @@
 import React from 'react';
-import { useApp } from '../context/AppContext';
-import { useML } from '../context/MLContext';
+import { useUiStore } from '../stores/uiStore';
+import { useMLStore } from '../stores/mlStore';
 import TrainingMonitor from '../components/training/TrainingMonitor';
 import PrivacyNotice from '../components/common/PrivacyNotice';
 import { Activity, Award } from 'lucide-react';
 
 const TrainingMonitorView = () => {
-  const { setActiveTab } = useApp();
-  const { trainingJob, stopTraining, setLastRunId } = useML();
+  const setActiveTab = useUiStore((s) => s.setActiveScreen);
+  const { trainingJob, stopTraining, setLastRunId } = useMLStore();
 
   const handleViewResults = () => {
     if (trainingJob?.result?.model_id) setLastRunId(trainingJob.result.model_id);

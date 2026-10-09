@@ -1,6 +1,7 @@
-import React from 'react';
-import { AppProvider, useApp } from './context/AppContext';
-import { MLProvider } from './context/MLContext';
+import React, { useEffect } from 'react';
+import { useAuthStore, selectRole } from './stores/authStore';
+import { useUiStore } from './stores/uiStore';
+import { socketService } from './services/socketService';
 
 // Navigation Components
 import { Sidebar } from './components/common/Sidebar';
@@ -56,7 +57,9 @@ import HospitalSettingsView from './views/HospitalSettingsView';
 import HospitalFederationView from './views/HospitalFederationView';
 
 const MainLayout = () => {
-  const { activeScreen, authStatus, userRole } = useApp();
+  const activeScreen = useUiStore((s) => s.activeScreen);
+  const authStatus = useAuthStore((s) => s.status);
+  const userRole = useAuthStore(selectRole);
 
   if (authStatus === 'bootstrapping') {
     return (
@@ -209,11 +212,10 @@ const MainLayout = () => {
 };
 
 export default function App() {
-  return (
-    <AppProvider>
-      <MLProvider>
-        <MainLayout />
-      </MLProvider>
-    </AppProvider>
-  );
+  // State lives in the Zustand stores (src/stores); restore the session once on load.
+  useEffect(() => {
+    useAuthStore.getState().bootstrap();
+    return () => socketService.disconnect();
+  }, []);
+  return <MainLayout />;
 }

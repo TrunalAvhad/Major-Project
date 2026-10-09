@@ -1,9 +1,12 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import MockBanner from '../common/MockBanner';
+import { useUiStore } from '../../stores/uiStore';
+import { useMockStore } from '../../stores/mockStore';
 import { AlertTriangle, X } from 'lucide-react';
 
 export const HaltTrainingModal = () => {
-  const { activeModal, setActiveModal, setSessionStatus } = useApp();
+  const { activeModal, setActiveModal } = useUiStore();
+  const setSessionStatus = useMockStore((s) => s.setSessionStatus);
 
   if (activeModal !== 'haltTraining') return null;
 
@@ -29,6 +32,7 @@ export const HaltTrainingModal = () => {
         </div>
 
         <div className="modal-body">
+          <div style={{ marginBottom: '12px' }}><MockBanner module="Halting a federated session" /></div>
           <div style={{
             background: 'var(--status-danger-bg)',
             border: '1px solid var(--status-danger-border)',

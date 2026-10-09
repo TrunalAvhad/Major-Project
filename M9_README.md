@@ -1,7 +1,16 @@
 # Module 9 — Federated Learning and Global Model Management
 
 ## 1. Purpose and Scope
-Module 9 (M9) provides the core infrastructure for a cryptographically verifiable, provenance-aware, and traceable federation architecture. It bridges decentralized hospital nodes (via a Local Python API) with a centralized Consortium Admin (Node.js/React + Python API Adapter). M9 is strictly responsible for managing federation jobs, round lifecycles, cryptographically verified updates, weighted aggregation, and creating persisted Global Models.
+Module 9 (M9) is the project's **central** federated learning server/orchestrator. It is not peer-to-peer, and it does not use Flower: it is a custom protocol in `federation/`. It connects the hospital machines (through the local ML service) with the Consortium Admin (Node.js/React + Python API adapter). M9 manages federation jobs, round lifecycles, checksum-verified updates, weighted aggregation, and versioned Global Models.
+
+> Updated 2026-10-09. Changes since the original write-up:
+> - rounds are opened from the admin UI;
+> - the server prepares each round's base model and hospitals download it;
+> - round deadlines are validated;
+> - early aggregation goes through a confirmation and progress dialog;
+> - hospitals are notified when a round opens or closes.
+>
+> See sections 3, 5, 7, 14 and 22. Plain-language overview: `docs/README.md` section 6.
 
 ## 2. Architectural Overview
 The architecture separates administrative orchestration from local training:
@@ -13,8 +22,10 @@ This project utilizes a **Project-Specific Centralized Federation Aggregation Pr
 
 **The Workflow:**
 1. **Admin** creates a federation job.
-2. **Admin** creates a round and injects a single **canonical starting model**.
-3. **Eligible hospitals** participate by obtaining the canonical model.
+2. **Admin** opens a round (deadline + minimum participants). M9 prepares the round's **canonical base model**:
+   - round 1: one freshly initialised seed;
+   - later rounds: the job's latest global model.
+3. **Eligible hospitals** join the round. Each one downloads the base model from the server.
 4. **Hospitals** train locally (M7) and produce checkpoint artifacts.
 5. **M9 (Central)** receives and strictly validates these updates.
 6. **M9** aggregates the validated parameter arrays.
@@ -22,7 +33,7 @@ This project utilizes a **Project-Specific Centralized Federation Aggregation Pr
 8. **Admin** evaluates the model.
 9. **Admin** makes a promotion decision.
 
-**Key Boundary:** The Global Model is centrally controlled. Hospitals and researchers do not automatically receive the resulting global weights; model distribution requires a separate authorization workflow.
+**Key Boundary:** The Global Model is centrally controlled. Hospitals receive a global model's weights only as the **base model of a later round they join** (authenticated download). There is no general push to all hospitals. Researchers have no access to global model weights.
 
 ## 4. Core M9 Data Model
 All federation state tracking is persisted in the SQLite database (`federation_metadata.db`) using the following core entities:
@@ -34,6 +45,12 @@ All federation state tracking is persisted in the SQLite database (`federation_m
 ## 5. Federation Round Lifecycle
 A round strictly follows this state machine:
 `CREATED` → `OPEN` → `RECEIVING` → `READY_FOR_AGGREGATION` → `AGGREGATING` → `GLOBAL_MODEL_CREATED`
+
+**Opening a round (adapter `create_round`)**:
+- The deadline is required. It must parse as an ISO 8601 date-time with a timezone, lie in the future, and is stored in UTC. An empty deadline used to make every update count as late.
+- `minimum_participants` defaults to the job's minimum.
+- `expected_participants` may start empty. Hospitals are added when they join (`POST /federation/jobs/:job_id/rounds/:round_id/participate`).
+- Unless a base model is passed explicitly, `federation/base_models.py` prepares it (section 7). The round opens immediately (`OPEN`).
 
 **Admin Early-Close Mechanism (`force_close=True`)**:
 - Permitted *only* through the authorized Admin aggregation path.
@@ -70,7 +87,16 @@ A hospital's resulting local checkpoint has its own unique identity (e.g., gener
 - **Hospital A**: `checkpoint_model_id = <Local_A>`, `base_model_id = CANONICAL_SEED_MOBILENET_V3`
 - **Hospital B**: `checkpoint_model_id = <Local_B>`, `base_model_id = CANONICAL_SEED_MOBILENET_V3`
 
-Before training, the hospital client mathematically verifies the downloaded canonical artifact against the round's prescribed checksum. The process **fails closed** if the artifact is missing, altered, or fails checksum validation.
+Before training, the hospital client recomputes the checksum of the downloaded base model and compares it with the round's prescribed checksum. Training **fails closed** if the artifact is missing, altered, or fails checksum validation.
+
+**How the base model reaches the hospitals:**
+1. `federation/base_models.py` `prepare_base_model()` builds the round's base model as a Module 6 checkpoint in `federation_artifacts/base_models/<id>/v1/`:
+   - round 1: a new model `SEED_<job_id>` (draft, untrained);
+   - later rounds: the job's latest global model's parameters, loaded into the architecture.
+2. The checksum is computed exactly as Module 7 verifies it (SHA-256 over the loaded parameters). An existing base model is reused, not rebuilt.
+3. Hospitals download it through `GET /api/v1/federation/rounds/:round_id/base-model/:file` (hospital_operator or admin). Only the two checkpoint files are served (`model.safetensors`, `metadata.json`).
+4. The local ML service (`_ensure_base_model` in `hospital_client/local_api/server.py`) downloads it once into `trained/<architecture>/models/<id>/v1/`, using the operator's own token and the configured backend URL.
+5. Module 7 then verifies the checksum before the first training step.
 
 ## 8. FederationHandoff Artifact Format
 M9 separates hospital updates from the final M9 aggregated global models. However, both natively use the highly optimized `FederationHandoff` format.
@@ -121,6 +147,15 @@ A critical persistence integrity fix was applied during M9 development.
 The central platform exposes secure Node.js controllers proxying requests to the Python `api_adapter.py`. 
 - **Admin Roles**: Exclusively hold the authority to view global models, trigger rounds, execute aggregation, and force early close.
 - **React UI**: Consumes dynamically derived provenance to accurately display the exact hospitals responsible for the specific model's aggregation.
+- **Federation Jobs screen** (`frontend/src/views/FederatedTrainingView.jsx`):
+  - create jobs;
+  - **Open round N** (deadline, minimum participants; disabled while another round of the job is in progress);
+  - the participant list with hospital names (admins get `hospital_names` with `GET /federation/jobs`).
+- **Aggregate Round** (Federation Jobs and Admin Overview, `components/federation/AggregateRoundDialog.jsx`):
+  1. A confirmation lists every participating hospital (name, id, update status) and warns when the deadline has not passed.
+  2. Confirming sends `force_close: true`. Module 9 still requires the minimum accepted updates.
+  3. The dialog shows the aggregation in progress, then the new global model, the round status and which hospitals were notified.
+- **Hospital access:** `hospital_operator` may list jobs, join a round, submit its own update and download a round's base model. Everything else is admin-only.
 
 ## 15. Admin Evaluation Bridge to M6/M16
 Global models are stored in M9 `FederationHandoff` format. To test global models, Admin evaluation executes a temporary structural bridge:
@@ -191,6 +226,8 @@ M9 acts as the foundational lifecycle and provenance pipeline. The following cap
 - Enhanced secure communication / transport protections
 - Byzantine / malicious update detection
 - Advanced telemetry and monitoring
+- Submitting updates between machines: today the hospital sends the server the folder path of its update, so hospital and server must share a machine
+- Module 12's hook (`federation/security_hooks.py`) currently accepts every update
 - More advanced privacy-preserving aggregation mechanisms such as FHE or SMPC, if adopted by the project
 
 ## 21. Key Files
@@ -208,8 +245,24 @@ The authoritative logic resides in:
 - `backend/src/routes/federationRoutes.js`
 - `backend/src/controllers/federationController.js`
 - `frontend/src/views/AdminFederationModelsView.jsx`
+- `federation/base_models.py` (round base model, added 2026-10-09)
+- `frontend/src/views/FederatedTrainingView.jsx`, `frontend/src/components/federation/AggregateRoundDialog.jsx`
+- `backend/src/services/notificationService.js`, `backend/src/routes/notificationRoutes.js`, `backend/src/models/Notification.js`
 
-## 22. Final M9 Status
+## 22. Round Notifications (Module 18 integration)
+
+The backend (`backend/src/services/notificationService.js`) stores one notification per active hospital in MongoDB (`Notification` model) and pushes it live to the hospital's Socket.io room `hospital_<hospital_id>`.
+
+| Event | Who is notified | Type |
+|---|---|---|
+| Admin opens a round | every active hospital | `ROUND_OPEN` |
+| Admin aggregates a round successfully | every active hospital that did **not** join that round | `ROUND_CLOSED` (do not train for this round; you will be notified when the next one opens) |
+
+- Hospitals read them with `GET /api/v1/notifications` and mark them read with `POST /api/v1/notifications/read` (their own hospital only).
+- A failed aggregation sends nothing.
+- A notification failure never undoes the federation action.
+
+## 23. Final M9 Status
 **PASS** — The currently implemented Module 9 federation architecture has been verified against its defined architectural requirements, including hospital participation and authorization, canonical base-model provenance, update validation, weighted aggregation, Global Model creation, persistence, dynamic participant provenance, and Admin-side Global Model retrieval/evaluation integration.
 
 M9 is the completed federation lifecycle and aggregation foundation for the current project scope. Privacy-enhancing mechanisms, enhanced secure-transport protections, Byzantine/malicious-update detection, and advanced telemetry remain outside the current M9 implementation and are reserved for subsequent modules.

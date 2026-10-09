@@ -1,6 +1,6 @@
 import React from 'react';
 import { CheckCircle, Loader, AlertTriangle, Circle } from 'lucide-react';
-import { useML } from '../../context/MLContext';
+import { useMLStore } from '../../stores/mlStore';
 import { JobLog } from '../charts/MLCharts';
 
 const STEPS = [
@@ -11,7 +11,8 @@ const STEPS = [
 
 /** Progress of the automatic local pipeline (locate -> M4 -> M5 -> M8). */
 const PipelineStatus = () => {
-  const { pipeline, activeDataset } = useML();
+  const pipeline = useMLStore((s) => s.pipeline);
+  const activeDataset = useMLStore((s) => s.activeDataset);
   if (!pipeline.running && !pipeline.error && pipeline.step !== 'done') return null;
 
   const current = STEPS.findIndex((s) => s.id === pipeline.step);

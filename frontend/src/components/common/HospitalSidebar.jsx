@@ -1,5 +1,6 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import { useUiStore } from '../../stores/uiStore';
+import { useAuthStore, selectHospitalId, selectHospitalName } from '../../stores/authStore';
 import { 
   LayoutDashboard, 
   Database, 
@@ -18,7 +19,10 @@ import {
 } from 'lucide-react';
 
 export const HospitalSidebar = () => {
-  const { activeScreen, setActiveScreen, hospitalId, hospitalName, user, logout } = useApp();
+  const { activeScreen, setActiveScreen } = useUiStore();
+  const { user, logout } = useAuthStore();
+  const hospitalId = useAuthStore(selectHospitalId);
+  const hospitalName = useAuthStore(selectHospitalName);
 
   const navItems = [
     { id: 'dashboard', label: 'Hospital Dashboard', icon: LayoutDashboard, module: 'M3' },
@@ -172,11 +176,11 @@ export const HospitalSidebar = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
           <ShieldCheck size={14} color="var(--status-healthy)" />
           <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--status-healthy)' }}>
-            Zero Raw Egress Locked
+            Raw data stays local
           </span>
         </div>
         <p style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.3 }}>
-          Local DICOM scans stay within hospital boundary. Only differential-privacy gradient updates exit.
+          Raw images stay on this machine. Federated training sends model parameter updates only.
         </p>
       </div>
 

@@ -90,52 +90,10 @@ class AuthService {
       this.setSession(access_token, user, remember);
       return { user, access_token };
     } catch (err) {
-      if (err.code === 'ROLE_SELECTION_REQUIRED' || (err.message && !err.message.includes('fetch') && !err.message.includes('Cannot connect'))) {
-        throw err;
+      // No offline/demo login: if the backend cannot be reached, signing in fails.
+      if (err.name === 'TypeError' && err.message.includes('fetch')) {
+        throw new Error('Cannot connect to backend server at ' + API_BASE_URL + '. Is backend running on port 5000?');
       }
-      
-      // Standalone / Offline Demo Credential Fallback
-      if (identifier === 'e.rostova@med.stanford.edu' && password === 'researcher123') {
-        const user = {
-          user_id: 'USR_r1e8a9d3c5f2',
-          name: 'Dr. Elena Rostova',
-          email: 'e.rostova@med.stanford.edu',
-          role: role || 'researcher',
-          status: 'active'
-        };
-        const token = 'mock_jwt_researcher_token_' + Date.now();
-        this.setSession(token, user, remember);
-        return { user, access_token: token };
-      }
-
-      if ((identifier === 'operator@stjude-clinical.org' || identifier === 'HOSP_000001') && password === 'hospital123') {
-        const user = {
-          user_id: 'USR_h7c2d9e4a1b0',
-          name: 'Dr. Marcus Vance',
-          email: 'operator@stjude-clinical.org',
-          role: 'hospital_operator',
-          hospital_id: 'HOSP_000001',
-          hospital_name: 'St. Jude Clinical Research & AI Node',
-          status: 'active'
-        };
-        const token = 'mock_jwt_hospital_token_' + Date.now();
-        this.setSession(token, user, remember);
-        return { user, access_token: token };
-      }
-
-      if (identifier === 'admin@consortium.org' && password === 'admin123') {
-        const user = {
-          user_id: 'USR_a9921c48201f',
-          name: 'Admin Security Council',
-          email: 'admin@consortium.org',
-          role: 'admin',
-          status: 'active'
-        };
-        const token = 'mock_jwt_admin_token_' + Date.now();
-        this.setSession(token, user, remember);
-        return { user, access_token: token };
-      }
-
       throw err;
     }
   }
@@ -201,6 +159,23 @@ class AuthService {
     } finally {
       this.clearSession();
     }
+  }
+
+  async changePassword(currentPassword, newPassword) {
+    const response = await fetch(`${API_BASE_URL}/auth/change-password`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.getToken()}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+      throw new Error(data?.error?.message || 'Failed to change password');
+    }
+    return data.data;
   }
 
   async getMe() {

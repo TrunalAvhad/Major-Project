@@ -13,7 +13,9 @@ API, and a hospital-side ML pipeline.
 ```
 Major Project/
 ├── frontend/          React + Vite app: researcher/admin screens and hospital screens (one app)
-├── backend/           Node.js + Express API: login, roles, users, hospitals, training requests (MongoDB)
+├── backend/           Node.js + Express API: login, roles, users, hospitals, training requests,
+│                      federation routes, notifications (MongoDB)
+├── federation/        Module 9 - central federated learning server (jobs, rounds, validation, FedAvg)
 ├── hospital_client/   Python ML pipeline that runs on the hospital machine
 │   ├── dataset/            Module 4  - dataset inspection
 │   ├── preprocessing/      Module 5  - preprocessing and train/validation/test splits
@@ -22,7 +24,8 @@ Major Project/
 │   ├── resource_training/  Module 8  - hardware-aware training recommendations
 │   ├── inference/          Module 16 - local inference
 │   └── local_api/          local ML service that lets the hospital screens run the pipeline
-├── docs/              per-module documentation (module1_readme.md ... module16_readme.md)
+├── docs/              documentation: start with docs/README.md, then module1_readme.md ... module16_readme.md
+├── M9_README.md       Module 9 (federated learning) documentation
 ├── requirements.txt   Python packages
 └── *.md               README and architecture documents (see section 9)
 ```
@@ -40,8 +43,10 @@ Backend API  :5000  <--- verifies ---  Local ML service  127.0.0.1:8765  (hospit
 MongoDB                            python -m hospital_client.<module>  (reads the dataset locally)
 ```
 
-Raw images and datasets never go to the backend. Only aggregate training progress (epoch, loss,
-accuracy) is sent to the backend when a hospital links a run to a researcher's training request.
+Raw images and datasets never go to the backend. The backend receives aggregate training progress
+(epoch, loss, accuracy) when a hospital links a run to a researcher's training request, and, for a
+federated round, the hospital's model update (parameters + metadata, no images). Module 9 runs as
+`python federation/api_adapter.py`, started by the backend for each federation request.
 
 ---
 
@@ -180,10 +185,15 @@ Change these passwords for anything beyond local development.
 
 Log in with **Secure Login as Hospital**, then:
 
-1. **Dataset Inspection** - click **Browse...** (or type a path) to locate a dataset: a folder of
-   images with one sub-folder per class (optionally already split into train/val/test), or a
-   CSV/XLS/XLSX file. Module 4 inspection, Module 5 preprocessing and Module 8 recommendations then
-   run automatically on this machine. The dataset is only read, never modified or uploaded.
+1. **Dataset Inspection** - click **Browse...** (or type a path) to locate a dataset:
+   - a folder of images with one sub-folder per class (optionally already split into train/val/test;
+     with only train/ and test/, a validation split is carved from train automatically);
+   - a folder of images whose labels are in a CSV (tick **Labels come from a metadata CSV**, choose
+     the CSV, its image-id and label columns, and name the class for each label value);
+   - a CSV/XLS/XLSX file.
+
+   Module 4 inspection, Module 5 preprocessing and Module 8 recommendations then run automatically
+   on this machine. The dataset is only read, never modified or uploaded.
 2. **Preprocessing Engine** - review the split and quality report. Optionally re-run with a
    patient/group-id map (JSON `{relative_path: patient_id}`) for patient-level splits.
 3. **Start Local Training** - choose one option yourself (nothing is pre-selected):
@@ -195,6 +205,14 @@ Log in with **Secure Login as Hospital**, then:
    statistics.
 6. **Local Models** / **Local Inference** - browse trained model versions and run a prediction on
    a new image.
+7. **Federation Status** - tag the dataset with a task (e.g. "Skin Cancer"), check its eligibility for
+   each federation job, and start federated training for an open round. The round's base model is
+   downloaded automatically, and the update is submitted when training finishes. **Communications**
+   shows round-opened/closed notifications.
+
+Admin side (log in as admin): **Federation Jobs** - create a job, **Open round**, and **Aggregate
+Round** (a confirmation lists the participating hospitals, then shows the aggregation progress and
+the new global model).
 
 All generated files go to `~/medfl_ml_work` (datasets' profiles and splits, trained models,
 results, plots). Change it with the `ML_WORK_DIR` environment variable before starting the ML
@@ -224,6 +242,7 @@ all options.
 
 ```powershell
 python -m pytest hospital_client -q          # ML pipeline + local ML service (CUDA tests skip without a GPU)
+python -m pytest federation/tests -q         # Module 9 federation
 cd backend; npm test; cd ..                  # backend API (first run downloads a test MongoDB binary, ~500 MB)
 cd frontend; npx vite build; cd ..           # frontend compiles
 ```
@@ -259,6 +278,8 @@ Local ML service environment variables (all optional):
 
 | File | Contents |
 |---|---|
+| **`docs/README.md`** | **start here**: module status, how each module works (methods used), how Module 8 adapts to the machine, how one trainer trains every model, run commands |
+| `M9_README.md` | Module 9 federated learning (jobs, rounds, base models, validation, FedAvg, notifications) |
 | `architecture.md` | overall platform architecture and team structure |
 | `ml_pipeline_architecture.md` | ML pipeline architecture and the Hospital Desktop integration |
 | `docs/module1_readme.md` - `docs/module3_readme.md` | authentication, researcher desktop, hospital desktop |
@@ -266,11 +287,13 @@ Local ML service environment variables (all optional):
 
 ## 10. Status
 
-| Implemented and tested | Planned (not implemented yet) |
-|---|---|
-| Modules 1-3 (auth, researcher desktop, hospital desktop) | Module 9 federated learning (Flower) |
-| Modules 4-8, 16 (hospital-side ML pipeline) | Module 10 differential privacy |
-| Hospital desktop <-> ML pipeline <-> backend integration | Modules 11-15, 17-21 |
+| Implemented and tested | Partial | Not implemented yet |
+|---|---|---|
+| Modules 1-3 (auth, researcher desktop, hospital desktop; a few screens are marked mock) | 13 monitoring, 14 storage/audit, 15 versioning, 18 notifications (messages are mock), 19 tests | 10 differential privacy, 11 secure communication (TLS), 12 malicious-update detection |
+| Modules 4-8, 16 (hospital-side ML pipeline) | | 17 mobile app, 20 experiments, 21 packaging |
+| Module 9 federated learning (custom central protocol, not Flower) | | |
+
+Full per-module status: `docs/README.md` section 2.
 
 Privacy note: the design keeps raw data local, but federated learning alone is not a privacy or
 legal-compliance guarantee.

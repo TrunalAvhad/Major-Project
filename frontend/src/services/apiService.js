@@ -2,6 +2,7 @@
  * API Service for Researcher/Admin Desktop
  * Interfaces with Backend for Training Requests, Admin Operations, Model Reports, and Telemetry
  */
+import authService from './authService';
 
 const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   ? import.meta.env.VITE_API_URL
@@ -9,11 +10,7 @@ const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && i
 
 class ApiService {
   getToken() {
-    try {
-      return localStorage.getItem('medfl_researcher_token') || sessionStorage.getItem('medfl_researcher_token');
-    } catch {
-      return null;
-    }
+    return authService.getToken();
   }
 
   getHeaders() {
@@ -145,6 +142,41 @@ class ApiService {
       throw new Error(data?.error?.message || 'Failed to reject researcher');
     }
     return data.data;
+  }
+
+  /** Every account (researchers, hospital operators, admins); optional ?role=&status= filters. */
+  async getUsers(filters = {}) {
+    const qs = new URLSearchParams(Object.entries(filters).filter(([, v]) => v)).toString();
+    const res = await fetch(`${API_BASE_URL}/admin/users${qs ? `?${qs}` : ''}`, { headers: this.getHeaders() });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data?.error?.message || 'Failed to fetch users');
+    }
+    return data.data.users;
+  }
+
+  /** action: 'approve' | 'reject' | 'suspend' */
+  async setUserStatus(userId, action) {
+    const res = await fetch(`${API_BASE_URL}/admin/users/${encodeURIComponent(userId)}/${action}`, {
+      method: 'POST',
+      headers: this.getHeaders()
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data?.error?.message || `Failed to ${action} user`);
+    }
+    return data.data;
+  }
+
+  /** Module 1 audit trail, newest first; optional { action, user_id, limit } filters. */
+  async getAuditLogs(filters = {}) {
+    const qs = new URLSearchParams(Object.entries(filters).filter(([, v]) => v)).toString();
+    const res = await fetch(`${API_BASE_URL}/admin/audit-logs${qs ? `?${qs}` : ''}`, { headers: this.getHeaders() });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data?.error?.message || 'Failed to fetch audit logs');
+    }
+    return data.data.logs;
   }
 
   async getDiseases() {

@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
+import { useAuthStore } from '../stores/authStore';
+import { useUiStore } from '../stores/uiStore';
 import { Building2, Lock, ShieldCheck, Check, AlertCircle, Loader2, ArrowLeft, KeyRound } from 'lucide-react';
 
 export const HospitalLoginView = () => {
-  const { login, setActiveScreen } = useApp();
-  const [identifier, setIdentifier] = useState('operator@stjude-clinical.org');
-  const [password, setPassword] = useState('hospital123');
+  const login = useAuthStore((s) => s.login);
+  const setActiveScreen = useUiStore((s) => s.setActiveScreen);
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -47,11 +49,10 @@ export const HospitalLoginView = () => {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent-teal)' }}>
           <Building2 size={14} />
-          <span><strong>CLINICAL NODE GATEWAY</strong> :: ENCLAVE PACS PORTAL</span>
+          <span><strong>HOSPITAL OPERATOR SIGN-IN</strong></span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '10px' }} className="font-mono">
-          <span>ISOLATION PROTOCOL: <strong style={{ color: 'var(--status-healthy)' }}>ENCLAVE LOCKED</strong></span>
-          <span>FIREWALL: <strong style={{ color: '#38bdf8' }}>ZERO RAW EGRESS</strong></span>
+          <span>RAW DATA: <strong style={{ color: 'var(--status-healthy)' }}>STAYS ON THIS MACHINE</strong></span>
         </div>
       </div>
 
@@ -102,41 +103,6 @@ export const HospitalLoginView = () => {
               Log in with your Hospital Institutional Email OR Registration ID
             </p>
           </div>
-
-          {/* Seed Quick Pill */}
-          <div style={{
-            background: 'var(--bg-nested)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: '6px',
-            padding: '10px 12px',
-            marginBottom: '16px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between'
-          }}>
-            <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>QUICK SEED CLINICAL NODE:</span>
-            <button
-              type="button"
-              onClick={() => {
-                setIdentifier('operator@stjude-clinical.org');
-                setPassword('hospital123');
-                setErrorMessage(null);
-              }}
-              style={{
-                background: 'rgba(8, 145, 178, 0.15)',
-                border: '1px solid rgba(8, 145, 178, 0.3)',
-                borderRadius: '4px',
-                padding: '4px 10px',
-                fontSize: '10px',
-                color: 'var(--accent-teal)',
-                fontWeight: '600',
-                cursor: 'pointer'
-              }}
-            >
-              St. Jude Node (HOSP_000001)
-            </button>
-          </div>
-
           {/* Error Banner */}
           {errorMessage && (
             <div style={{
@@ -169,7 +135,7 @@ export const HospitalLoginView = () => {
                   required
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder="e.g. HOSP_000001 or operator@stjude-clinical.org"
+                  placeholder="e.g. HOSP_000001 or operator@hospital.org"
                   style={{
                     width: '100%',
                     height: '36px',

@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { useApp } from '../context/AppContext';
-import { useML } from '../context/MLContext';
-import trainingService from '../services/trainingService';
+import React, { useEffect } from 'react';
+import { useUiStore } from '../stores/uiStore';
+import { useAuthStore, selectHospitalId, selectHospitalName } from '../stores/authStore';
+import { useMLStore } from '../stores/mlStore';
 import PrivacyNotice from '../components/common/PrivacyNotice';
 import {
   Building2,
@@ -19,13 +19,17 @@ import {
 const gb = (mb) => (mb == null ? '-' : `${(mb / 1024).toFixed(1)} GB`);
 
 const DashboardView = () => {
-  const { user, hospitalId, hospitalName, setActiveTab } = useApp();
-  const { hardware, hardwareError, datasets = [], activeDataset, trainingJob, serviceStatus } = useML();
-  const [runs, setRuns] = useState([]);
+  const setActiveTab = useUiStore((s) => s.setActiveScreen);
+  const user = useAuthStore((s) => s.user);
+  const hospitalId = useAuthStore(selectHospitalId);
+  const hospitalName = useAuthStore(selectHospitalName);
+  const { hardware, hardwareError, datasets, activeDataset, trainingJob, serviceStatus, refreshRuns } = useMLStore();
+  const runs = useMLStore((s) => s.runs.data);
 
+  // Refreshed again by the store itself whenever a training run finishes.
   useEffect(() => {
-    if (serviceStatus === 'online') trainingService.getTrainingHistory().then(setRuns).catch(() => setRuns([]));
-  }, [serviceStatus, trainingJob?.status]);
+    if (serviceStatus === 'online') refreshRuns();
+  }, [serviceStatus, refreshRuns]);
 
   const isTraining = trainingJob?.status === 'running';
   const lastEpoch = trainingJob?.epochs?.[trainingJob.epochs.length - 1];
