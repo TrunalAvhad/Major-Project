@@ -43,15 +43,23 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def wait_until_listening(host: str, port: int, timeout: float = 10.0) -> bool:
+def wait_until_listening(host: str, port: int, proc: subprocess.Popen, timeout: float = 60.0) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        if proc.poll() is not None:
+            stdout, stderr = proc.communicate(timeout=2)
+            stdout_str = stdout.decode("utf-8", errors="replace") if stdout else ""
+            stderr_str = stderr.decode("utf-8", errors="replace") if stderr else ""
+            raise AssertionError(
+                f"Flower server process exited prematurely with code {proc.returncode}.\n"
+                f"Stdout: {stdout_str}\nStderr: {stderr_str}"
+            )
         try:
             with socket.create_connection((host, port), timeout=0.2):
-                return True
+                return
         except (OSError, ConnectionRefusedError):
             time.sleep(0.1)
-    return False
+    raise AssertionError(f"Flower server failed to listen on {host}:{port} within {timeout}s.")
 
 
 def generate_test_certificates(tmp_path):
@@ -202,7 +210,7 @@ def test_flower_tls_wrong_ca_fails_bounded(tmp_path):
 
     proc = subprocess.Popen(cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
-        assert wait_until_listening("127.0.0.1", port, timeout=10.0), "Flower TLS server failed to start and listen"
+        wait_until_listening("127.0.0.1", port, proc, timeout=60.0)
 
         keys = state_keys()
         client = FakeHospital("H1", keys)
@@ -227,7 +235,7 @@ def test_flower_tls_wrong_ca_fails_bounded(tmp_path):
 
         err_str = str(client_error).lower()
         # Verify it failed specifically due to certificate / TLS handshake failure
-        assert any(term in err_str for term in ["certificate_verify_failed", "tls handshake failed", "ssl", "unavailable"]), (
+        assert any(term in err_str for term in ["certificate_verify_failed", "tls handshake failed"]), (
             f"Unexpected exception details: {client_error}"
         )
         assert len(client.seen) == 0
@@ -274,7 +282,7 @@ def test_flower_tls_insecure_client_fails_bounded(tmp_path):
 
     proc = subprocess.Popen(cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
-        assert wait_until_listening("127.0.0.1", port, timeout=10.0), "Flower TLS server failed to start and listen"
+        wait_until_listening("127.0.0.1", port, proc, timeout=60.0)
 
         keys = state_keys()
         client = FakeHospital("H1", keys)
@@ -296,7 +304,7 @@ def test_flower_tls_insecure_client_fails_bounded(tmp_path):
         assert elapsed < 5.0, f"Insecure client took too long to fail: {elapsed:.2f}s"
         assert client_error is not None, "Insecure client should fail when connecting to TLS Flower server"
         err_str = str(client_error).lower()
-        assert any(term in err_str for term in ["unavailable", "end of tcp stream", "handshake", "ssl"]), (
+        assert any(term in err_str for term in ["end of tcp stream", "handshake"]), (
             f"Unexpected exception details: {client_error}"
         )
         assert len(client.seen) == 0
