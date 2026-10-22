@@ -62,21 +62,40 @@ const start = async (job) => {
   fs.mkdirSync(dir, { recursive: true });
   fs.rmSync(path.join(dir, 'close_round'), { force: true });
   const port = Number(process.env.FLOWER_PORT) || await freePort();
-  const defaultProto = process.env.TLS_ENABLED === 'true' ? 'https' : 'http';
+  const isTls = process.env.TLS_ENABLED === 'true';
+  const defaultProto = isTls ? 'https' : 'http';
   const backendUrl = process.env.BACKEND_SELF_URL || `${defaultProto}://localhost:${process.env.PORT || 5000}/api/v1`;
   const flowerArgs = ['-m', 'federation.flower_app', '--job-id', jobId, '--port', String(port),
     '--backend-url', backendUrl, '--status-file', statusPath(jobId)];
-  const caCert = process.env.FLOWER_CA_CERT || process.env.TLS_CA_PATH;
-  const srvCert = process.env.FLOWER_SERVER_CERT || process.env.TLS_CERT_PATH;
-  const srvKey = process.env.FLOWER_SERVER_KEY || process.env.TLS_KEY_PATH;
-  if (caCert && srvCert && srvKey) {
+
+  const caCert = process.env.FLOWER_CA;
+  const srvCert = process.env.TLS_CERT_PATH;
+  const srvKey = process.env.TLS_KEY_PATH;
+
+  if (isTls) {
+    if (!caCert || !srvCert || !srvKey) {
+      throw Object.assign(
+        new Error('[TLS ERROR] TLS_ENABLED=true but Flower TLS configuration is incomplete. Required: FLOWER_CA, TLS_CERT_PATH, TLS_KEY_PATH.'),
+        { status: 500 }
+      );
+    }
+    if (!fs.existsSync(caCert)) {
+      throw Object.assign(new Error(`[TLS ERROR] Flower CA certificate file not found: "${caCert}".`), { status: 500 });
+    }
+    if (!fs.existsSync(srvCert)) {
+      throw Object.assign(new Error(`[TLS ERROR] Flower server certificate file not found: "${srvCert}".`), { status: 500 });
+    }
+    if (!fs.existsSync(srvKey)) {
+      throw Object.assign(new Error(`[TLS ERROR] Flower server key file not found: "${srvKey}".`), { status: 500 });
+    }
     flowerArgs.push('--ca-cert', caCert,
                     '--server-cert', srvCert,
                     '--server-key', srvKey);
-  }
-  const backendCa = process.env.ML_BACKEND_CA || process.env.FLOWER_BACKEND_CA || process.env.TLS_CA_PATH;
-  if (backendCa) {
-    flowerArgs.push('--backend-ca', backendCa);
+
+    const backendCa = process.env.ML_BACKEND_CA || caCert;
+    if (backendCa && fs.existsSync(backendCa)) {
+      flowerArgs.push('--backend-ca', backendCa);
+    }
   }
   const child = spawn('python', flowerArgs, {
     cwd: REPO_ROOT, env: { ...process.env, PYTHONPATH: '.', PYTHONUNBUFFERED: '1' },

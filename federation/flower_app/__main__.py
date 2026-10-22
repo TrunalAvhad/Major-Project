@@ -25,7 +25,9 @@ def backend_identity_check(backend_url: str, backend_ca: Optional[str] = None) -
     cache = {}
     ctx = None
     if backend_url.startswith("https://"):
-        if backend_ca and os.path.isfile(backend_ca):
+        if backend_ca is not None:
+            if not os.path.isfile(backend_ca):
+                raise FileNotFoundError(f"Backend CA certificate file not found: '{backend_ca}'")
             ctx = ssl.create_default_context(cafile=backend_ca)
         else:
             ctx = ssl.create_default_context()
@@ -70,16 +72,15 @@ def main(argv=None) -> None:
     a = p.parse_args(argv)
 
     certificates = None
-    if a.ca_cert and a.server_cert and a.server_key:
-        if not os.path.isfile(a.ca_cert):
-            print(f"Error: Flower CA certificate not found: '{a.ca_cert}'", file=sys.stderr)
+    tls_flags = [a.ca_cert, a.server_cert, a.server_key]
+    if any(tls_flags):
+        if not all(tls_flags):
+            print("Error: Flower TLS requires all three of --ca-cert, --server-cert, and --server-key to be specified.", file=sys.stderr)
             sys.exit(1)
-        if not os.path.isfile(a.server_cert):
-            print(f"Error: Flower server certificate not found: '{a.server_cert}'", file=sys.stderr)
-            sys.exit(1)
-        if not os.path.isfile(a.server_key):
-            print(f"Error: Flower server key not found: '{a.server_key}'", file=sys.stderr)
-            sys.exit(1)
+        for flag_name, path_val in [("--ca-cert", a.ca_cert), ("--server-cert", a.server_cert), ("--server-key", a.server_key)]:
+            if not os.path.isfile(path_val):
+                print(f"Error: Flower TLS {flag_name} file not found: '{path_val}'", file=sys.stderr)
+                sys.exit(1)
         with open(a.ca_cert, "rb") as f:
             ca_bytes = f.read()
         with open(a.server_cert, "rb") as f:

@@ -2,12 +2,19 @@
 Module 11 Flower TLS Integration Tests.
 Verifies:
 1. Flower server + client round succeeds over TLS with valid CA and server certificates.
-2. Flower client with wrong CA certificate fails within bounded time (bounded by max_retries / max_wait_time).
+2. Flower client with wrong CA certificate fails with an SSL/certificate verification error within bounded time.
 3. Flower client with insecure=True connecting to TLS Flower server fails within bounded time without hanging.
+
+All tests dynamically generate certificates into temporary directories; no dependency on repo certs/.
+Server runs in a subprocess for negative tests to ensure the port is actively listening and to avoid
+Python main-thread signal handler issues in worker threads.
 """
 import datetime
 import json
 import os
+import socket
+import subprocess
+import sys
 import threading
 import time
 import flwr as fl
@@ -17,8 +24,8 @@ import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import NameOID
 
+from scripts.make_dev_certs import build_ca_certificate, build_server_certificate
 from federation import participation
 from federation.flower_app.server import serve
 from federation.jobs import JobManager
@@ -26,51 +33,57 @@ from federation.storage import FederationStorage
 from hospital_client.training.federation import build_federation_handoff
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-CERTS_DIR = os.path.join(REPO_ROOT, "certs")
-CA_PATH = os.path.join(CERTS_DIR, "ca.pem")
-SERVER_CERT = os.path.join(CERTS_DIR, "server.pem")
-SERVER_KEY = os.path.join(CERTS_DIR, "server.key")
-
 ARCH = "mobilenet_v3_small"
 MAPPING = {"Parasitized": 0, "Uninfected": 1}
 
 
-def free_address():
-    import socket
+def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
-        return f"127.0.0.1:{s.getsockname()[1]}"
+        return s.getsockname()[1]
 
 
-def load_dev_certificates():
-    if not (os.path.isfile(CA_PATH) and os.path.isfile(SERVER_CERT) and os.path.isfile(SERVER_KEY)):
-        pytest.skip("Dev certificates (ca.pem, server.pem, server.key) missing.")
-    with open(CA_PATH, "rb") as f:
-        ca_bytes = f.read()
-    with open(SERVER_CERT, "rb") as f:
-        cert_bytes = f.read()
-    with open(SERVER_KEY, "rb") as f:
-        key_bytes = f.read()
-    return ca_bytes, cert_bytes, key_bytes
+def wait_until_listening(host: str, port: int, timeout: float = 10.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.2):
+                return True
+        except (OSError, ConnectionRefusedError):
+            time.sleep(0.1)
+    return False
 
 
-def make_untrusted_ca():
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    subject = issuer = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, "Untrusted Dev CA"),
-    ])
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(subject)
-        .issuer_name(issuer)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1))
-        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=10))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-        .sign(key, hashes.SHA256())
+def generate_test_certificates(tmp_path):
+    ca_key, ca_cert = build_ca_certificate(common_name="Flower Test CA")
+    server_key, server_cert = build_server_certificate(
+        ca_key, ca_cert, ["localhost", "127.0.0.1", "::1"], common_name="localhost"
     )
-    return cert.public_bytes(serialization.Encoding.PEM)
+
+    ca_path = tmp_path / "ca.pem"
+    server_cert_path = tmp_path / "server.pem"
+    server_key_path = tmp_path / "server.key"
+
+    ca_bytes = ca_cert.public_bytes(serialization.Encoding.PEM)
+    cert_bytes = server_cert.public_bytes(serialization.Encoding.PEM)
+    key_bytes = server_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption(),
+    )
+
+    ca_path.write_bytes(ca_bytes)
+    server_cert_path.write_bytes(cert_bytes)
+    server_key_path.write_bytes(key_bytes)
+
+    return {
+        "ca_path": str(ca_path),
+        "server_cert_path": str(server_cert_path),
+        "server_key_path": str(server_key_path),
+        "ca_bytes": ca_bytes,
+        "cert_bytes": cert_bytes,
+        "key_bytes": key_bytes,
+    }
 
 
 class FakeHospital(fl.client.NumPyClient):
@@ -113,10 +126,11 @@ def make_job(tmp_path, approved, minimum=1, total_rounds=1):
 
 
 def test_flower_tls_round_success(tmp_path):
-    """Full round with Flower server and client over mutual TLS."""
-    ca_bytes, cert_bytes, key_bytes = load_dev_certificates()
+    """Full round with Flower server (main thread) and client over TLS with dynamic certs."""
+    certs = generate_test_certificates(tmp_path)
     storage = make_job(tmp_path, ["H1"], minimum=1, total_rounds=1)
-    address = free_address()
+    port = free_port()
+    address = f"127.0.0.1:{port}"
     status_path = str(tmp_path / "flower" / "status.json")
     keys = state_keys()
     client = FakeHospital("H1", keys)
@@ -126,7 +140,7 @@ def test_flower_tls_round_success(tmp_path):
         fl.client.start_client(
             server_address=address,
             client=client.to_client(),
-            root_certificates=ca_bytes,
+            root_certificates=certs["ca_bytes"],
             insecure=False,
             max_retries=2,
             max_wait_time=3.0,
@@ -143,7 +157,7 @@ def test_flower_tls_round_success(tmp_path):
         verify_identity=lambda hid, tok: tok == f"tok-{hid}",
         close_path=str(tmp_path / "flower" / "close_round"),
         poll_seconds=0.2,
-        certificates=(ca_bytes, cert_bytes, key_bytes),
+        certificates=(certs["ca_bytes"], certs["cert_bytes"], certs["key_bytes"]),
     )
 
     t.join(timeout=15)
@@ -152,77 +166,121 @@ def test_flower_tls_round_success(tmp_path):
 
 
 def test_flower_tls_wrong_ca_fails_bounded(tmp_path):
-    """Client using wrong CA must fail within bounded time and not hang."""
-    ca_bytes, cert_bytes, key_bytes = load_dev_certificates()
-    wrong_ca = make_untrusted_ca()
-    storage = make_job(tmp_path, ["H1"], minimum=1, total_rounds=1)
-    address = free_address()
+    """Flower server runs in a subprocess with TLS; client with untrusted CA must fail
+    with an SSL/certificate error within bounded time (< 5 seconds)."""
+    certs = generate_test_certificates(tmp_path)
+    # Generate an untrusted CA that did NOT sign the server cert
+    w_key, w_cert = build_ca_certificate(common_name="Untrusted Other CA")
+    wrong_ca_bytes = w_cert.public_bytes(serialization.Encoding.PEM)
+
+    db_path = str(tmp_path / "fed.db")
+    art_dir = str(tmp_path / "artifacts")
     status_path = str(tmp_path / "flower" / "status.json")
-    keys = state_keys()
-    client = FakeHospital("H1", keys)
+    os.makedirs(os.path.dirname(status_path), exist_ok=True)
 
-    client_error = []
-    start_time = time.time()
+    storage = FederationStorage(db_path, art_dir)
+    JobManager(storage).create_job("JOB_TLS", "Malaria", "image_classification", ARCH, 2, MAPPING, [], 1, "", {},
+                                   {"protocol": "flower", "total_rounds": 1, "round_duration_hours": 1.0})
+    participation.request_participation(storage, storage.get_job("JOB_TLS"), "H1", {"eligible": True})
+    participation.decide_participation(storage, storage.get_job("JOB_TLS"), "H1", "APPROVED")
 
-    def client_worker():
-        time.sleep(1.0)
+    port = free_port()
+    address = f"127.0.0.1:{port}"
+
+    cmd = [
+        sys.executable, "-m", "federation.flower_app",
+        "--job-id", "JOB_TLS",
+        "--port", str(port),
+        "--backend-url", "http://127.0.0.1:5000/api/v1",
+        "--status-file", status_path,
+        "--db", db_path,
+        "--artifacts", art_dir,
+        "--ca-cert", certs["ca_path"],
+        "--server-cert", certs["server_cert_path"],
+        "--server-key", certs["server_key_path"],
+    ]
+
+    proc = subprocess.Popen(cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        assert wait_until_listening("127.0.0.1", port, timeout=10.0), "Flower TLS server failed to start and listen"
+
+        keys = state_keys()
+        client = FakeHospital("H1", keys)
+
+        client_error = None
+        start_time = time.time()
         try:
             fl.client.start_client(
                 server_address=address,
                 client=client.to_client(),
-                root_certificates=wrong_ca,
+                root_certificates=wrong_ca_bytes,
                 insecure=False,
                 max_retries=1,
                 max_wait_time=2.0,
             )
         except Exception as e:
-            client_error.append(e)
+            client_error = e
 
-    ct = threading.Thread(target=client_worker, daemon=True)
-    ct.start()
+        elapsed = time.time() - start_time
+        assert elapsed < 5.0, f"Client took too long to fail: {elapsed:.2f}s"
+        assert client_error is not None, "Client should have failed with wrong CA certificate"
 
-    # Serve in separate thread so we can close or time out
-    st = threading.Thread(
-        target=lambda: serve(
-            storage,
-            "JOB_TLS",
-            address,
-            status_path,
-            verify_identity=lambda hid, tok: tok == f"tok-{hid}",
-            close_path=str(tmp_path / "flower" / "close_round"),
-            poll_seconds=0.2,
-            certificates=(ca_bytes, cert_bytes, key_bytes),
-        ),
-        daemon=True,
-    )
-    st.start()
-
-    ct.join(timeout=10)
-    elapsed = time.time() - start_time
-    (tmp_path / "flower" / "close_round").touch()
-    st.join(timeout=5)
-
-    # Must terminate within bounded time (< 10 seconds)
-    assert not ct.is_alive(), f"Client hung and did not terminate within bounded time ({elapsed:.1f}s)"
-    assert elapsed < 10.0
-    # No training occurred with wrong CA
-    assert len(client.seen) == 0
+        err_str = str(client_error).lower()
+        # Verify it failed specifically due to certificate / TLS handshake failure
+        assert any(term in err_str for term in ["certificate_verify_failed", "tls handshake failed", "ssl", "unavailable"]), (
+            f"Unexpected exception details: {client_error}"
+        )
+        assert len(client.seen) == 0
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
 
 
 def test_flower_tls_insecure_client_fails_bounded(tmp_path):
-    """Insecure client attempting to connect to TLS server must fail bounded and not hang."""
-    ca_bytes, cert_bytes, key_bytes = load_dev_certificates()
-    storage = make_job(tmp_path, ["H1"], minimum=1, total_rounds=1)
-    address = free_address()
+    """Flower server runs in a subprocess with TLS; client with insecure=True must fail
+    within bounded time (< 5 seconds) without hanging."""
+    certs = generate_test_certificates(tmp_path)
+
+    db_path = str(tmp_path / "fed.db")
+    art_dir = str(tmp_path / "artifacts")
     status_path = str(tmp_path / "flower" / "status.json")
     os.makedirs(os.path.dirname(status_path), exist_ok=True)
-    keys = state_keys()
-    client = FakeHospital("H1", keys)
 
-    start_time = time.time()
+    storage = FederationStorage(db_path, art_dir)
+    JobManager(storage).create_job("JOB_TLS", "Malaria", "image_classification", ARCH, 2, MAPPING, [], 1, "", {},
+                                   {"protocol": "flower", "total_rounds": 1, "round_duration_hours": 1.0})
+    participation.request_participation(storage, storage.get_job("JOB_TLS"), "H1", {"eligible": True})
+    participation.decide_participation(storage, storage.get_job("JOB_TLS"), "H1", "APPROVED")
 
-    def client_worker():
-        time.sleep(1.0)
+    port = free_port()
+    address = f"127.0.0.1:{port}"
+
+    cmd = [
+        sys.executable, "-m", "federation.flower_app",
+        "--job-id", "JOB_TLS",
+        "--port", str(port),
+        "--backend-url", "http://127.0.0.1:5000/api/v1",
+        "--status-file", status_path,
+        "--db", db_path,
+        "--artifacts", art_dir,
+        "--ca-cert", certs["ca_path"],
+        "--server-cert", certs["server_cert_path"],
+        "--server-key", certs["server_key_path"],
+    ]
+
+    proc = subprocess.Popen(cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        assert wait_until_listening("127.0.0.1", port, timeout=10.0), "Flower TLS server failed to start and listen"
+
+        keys = state_keys()
+        client = FakeHospital("H1", keys)
+
+        client_error = None
+        start_time = time.time()
         try:
             fl.client.start_client(
                 server_address=address,
@@ -231,33 +289,21 @@ def test_flower_tls_insecure_client_fails_bounded(tmp_path):
                 max_retries=1,
                 max_wait_time=2.0,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            client_error = e
 
-    ct = threading.Thread(target=client_worker, daemon=True)
-    ct.start()
-
-    st = threading.Thread(
-        target=lambda: serve(
-            storage,
-            "JOB_TLS",
-            address,
-            status_path,
-            verify_identity=lambda hid, tok: tok == f"tok-{hid}",
-            close_path=str(tmp_path / "flower" / "close_round"),
-            poll_seconds=0.2,
-            certificates=(ca_bytes, cert_bytes, key_bytes),
-        ),
-        daemon=True,
-    )
-    st.start()
-
-    ct.join(timeout=10)
-    elapsed = time.time() - start_time
-    (tmp_path / "flower" / "close_round").touch()
-    st.join(timeout=5)
-
-    # Insecure client must not hang
-    assert not ct.is_alive(), f"Insecure client hung ({elapsed:.1f}s)"
-    assert elapsed < 10.0
-    assert len(client.seen) == 0
+        elapsed = time.time() - start_time
+        assert elapsed < 5.0, f"Insecure client took too long to fail: {elapsed:.2f}s"
+        assert client_error is not None, "Insecure client should fail when connecting to TLS Flower server"
+        err_str = str(client_error).lower()
+        assert any(term in err_str for term in ["unavailable", "end of tcp stream", "handshake", "ssl"]), (
+            f"Unexpected exception details: {client_error}"
+        )
+        assert len(client.seen) == 0
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()

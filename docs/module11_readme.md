@@ -1,9 +1,10 @@
 # Module 11 — Secure Communication (TLS)
 
-> **Status**: Completed. Implemented and verified (4 backend TLS tests, 5 hospital-client TLS tests,
-> 3 Flower TLS integration tests; see [Verification](#verification)). All network connections that
-> cross a machine boundary are covered. Known limitations and architectural boundaries are explicitly
-> documented; items needing further development are cataloged under [Future Work](#future-work).
+> **Status**: In progress. Implemented and verified with automated test suites (5 backend TLS tests,
+> 6 hospital-client TLS tests, 3 Flower TLS integration tests; see [Verification](#verification)).
+> All network connections that cross a machine boundary are covered. Known limitations and
+> architectural boundaries are explicitly documented; items needing further development are
+> cataloged under [Future Work](#future-work).
 
 ---
 
@@ -11,7 +12,7 @@
 
 Module 11 secures every network connection that crosses a machine boundary in the MedFL platform.
 Without TLS, bearer tokens (JWTs), model weights, and patient-derived gradients travel in plain text
-— a passive eavesdropper on the hospital network can reconstruct the model or replay the token.
+— a passive eavesdropper on the network can reconstruct the model or replay the token.
 
 Five distinct communication links exist across the system:
 
@@ -60,199 +61,120 @@ Five distinct communication links exist across the system:
 
 ---
 
+## Configuration & Environment Variables
+
+To avoid ambiguity, each configuration setting has a single canonical variable name:
+
+| Environment Variable | Where Read | Purpose |
+|----------------------|------------|---------|
+| `TLS_ENABLED` | `backend/server.js`, `backend/src/services/flowerService.js` | Set to `'true'` to enable HTTPS and Flower TLS across the backend. Defaults to HTTP when unset/false. |
+| `TLS_CERT_PATH` | `backend/server.js`, `backend/src/services/flowerService.js` | Filesystem path to the server certificate (PEM format) with SANs covering localhost and server IPs. |
+| `TLS_KEY_PATH` | `backend/server.js`, `backend/src/services/flowerService.js` | Filesystem path to the server private key (PEM format). |
+| `FLOWER_CA` | `backend/src/services/flowerService.js`, `hospital_client/local_api/server.py` | Filesystem path to the CA certificate used by the Flower server and Flower client for gRPC TLS. |
+| `ML_BACKEND_CA` | `hospital_client/local_api/server.py`, `backend/src/services/flowerService.js`, `federation/flower_app/__main__.py` | Filesystem path to the CA certificate used by Python services to verify backend HTTPS requests. |
+| `ML_BACKEND_URL` | `hospital_client/local_api/server.py`, `federation/flower_app/__main__.py` | Base URL of the backend API (e.g. `https://localhost:5000/api/v1`). |
+
+---
+
 ## Components
 
 ### 1. Certificate Tooling — `scripts/make_dev_certs.py`
 
-Generates a 2048-bit RSA local CA and a signed server certificate with SANs:
+Generates a 2048-bit RSA local CA and a signed server certificate with Subject Alternative Names (SANs):
 
 ```bash
-# Generate dev certs (do not overwrite existing without --force)
+# Generate dev certs into gitignored certs/ directory
 python scripts/make_dev_certs.py --out-dir certs
 
-# With optional LAN IP for multi-machine testing
+# With optional LAN IP or extra host for multi-machine setups
 python scripts/make_dev_certs.py --out-dir certs --lan-ip 192.168.1.100
 ```
 
-**Generated files** (all gitignored):
+**Security Invariants**:
+- Overwrite protection: Refuses to overwrite existing certificates without `--force`.
+- Private key protection: Private keys are never printed to stdout; restrictive permissions (`0o600`) are applied on disk.
+- SAN enforcement: Always includes `localhost`, `127.0.0.1`, and `::1`.
 
-| File | Purpose |
-|------|---------|
-| `certs/ca.pem` | Local CA certificate (trust anchor) |
-| `certs/ca.key` | CA private key (restricted permissions, never printed) |
-| `certs/server.pem` | Server certificate (SANs: localhost, 127.0.0.1, ::1) |
-| `certs/server.key` | Server private key (restricted permissions) |
-
-**Windows browser trust** (run once, removes itself with the untrust command):
+**Windows Browser Trust**:
 ```powershell
-# Trust (adds to Current User Root store)
+# Trust the local dev CA (run once in an elevated or user shell)
 certutil -user -addstore Root certs\ca.pem
 
-# Untrust / cleanup
+# Remove/untrust the local dev CA
 certutil -user -delstore Root "MedFL Local Development CA"
 ```
 
-### 2. Backend HTTPS — `backend/server.js`
+### 2. Backend HTTPS Server — `backend/server.js`
 
-When `TLS_ENABLED=true`, the backend starts an HTTPS server with `minVersion: 'TLSv1.2'`. A missing
-or unreadable certificate/key file causes immediate startup failure — there is no silent HTTP fallback.
+When `TLS_ENABLED=true`, `createHttpServer()` starts an HTTPS server using `https.createServer`:
+- Requires `TLS_CERT_PATH` and `TLS_KEY_PATH`.
+- Strict validation: If either file is missing or unreadable, the server immediately throws `[TLS ERROR]` and refuses to start (no silent fallback).
+- Configures explicit `minVersion: 'TLSv1.2'`.
+- Socket.io attaches to the HTTPS server and automatically operates over `wss://`.
 
-**Environment variables** (`.env`):
+### 3. Flower Server Subprocess Spawning — `backend/src/services/flowerService.js`
 
-| Variable | Description |
-|----------|-------------|
-| `TLS_ENABLED` | `true` to enable HTTPS |
-| `TLS_CERT_PATH` | Path to server certificate (`certs/server.pem`) |
-| `TLS_KEY_PATH` | Path to server private key (`certs/server.key`) |
+When `TLS_ENABLED=true`:
+- Requires `FLOWER_CA`, `TLS_CERT_PATH`, and `TLS_KEY_PATH`. If any are unset or the files do not exist, `flowerService.start()` immediately rejects with `[TLS ERROR]` (no plaintext Flower server in TLS mode).
+- Passes `--ca-cert`, `--server-cert`, and `--server-key` to `python -m federation.flower_app`.
+- Passes `--backend-ca` (pointing to `ML_BACKEND_CA`) for backend identity verification over HTTPS.
 
-```dotenv
-TLS_ENABLED=true
-TLS_CERT_PATH=certs/server.pem
-TLS_KEY_PATH=certs/server.key
-```
+### 4. Flower Server CLI — `federation/flower_app/__main__.py`
 
-Socket.io is attached to the same HTTPS server and therefore automatically uses WSS.
+- Requires all three of `--ca-cert`, `--server-cert`, and `--server-key` if any are passed. Specifying a partial set causes immediate termination with exit code 1.
+- Strict `backend_identity_check`: If `--backend-ca` is provided, verifies that the file exists; if missing, raises `FileNotFoundError` rather than silently falling back to system CAs.
 
-### 3. Hospital ML Service → Backend — `hospital_client/local_api/server.py`
+### 5. Hospital ML Service — `hospital_client/local_api/server.py`
 
-All backend calls (`/auth/me`, `/federation/jobs`, `/federation/rounds/*/base-model/*`,
-`/federation/jobs/*/rounds/*/submit`, `/federation/jobs/*/flower/report`) now go through
-`backend_urlopen()`, which:
-
-- Returns `None` (no TLS) for HTTP URLs, so existing test mocks remain compatible.
-- For HTTPS URLs, loads a strict `SSLContext` from `ML_BACKEND_CA` (or system CAs if not set).
-- Raises `ApiError(502)` with a clear SAN-guidance message on certificate verification failure.
-- **Never** disables verification (`verify_mode = CERT_REQUIRED`, `check_hostname = True`).
-
-A startup security warning is printed if `ML_BACKEND_URL` is plain HTTP to a non-loopback host.
-
-**Environment variables** (hospital operator's shell):
-
-| Variable | Description |
-|----------|-------------|
-| `ML_BACKEND_URL` | Backend base URL (e.g. `https://hospital-server:5000/api/v1`) |
-| `ML_BACKEND_CA` | Path to CA cert for backend TLS verification |
-
-### 4. Flower Server TLS — `federation/flower_app/server.py` & `__main__.py`
-
-`serve()` now accepts an optional `certificates` parameter (a `(ca_bytes, cert_bytes, key_bytes)` tuple)
-passed directly to `fl.server.start_server`. The `__main__.py` entry point accepts:
-
-```
---ca-cert     Path to CA certificate
---server-cert Path to server certificate
---server-key  Path to server private key
---backend-ca  CA for verifying backend HTTPS calls from the Flower server process
-```
-
-The backend's `flowerService.js` automatically passes these arguments when `TLS_ENABLED=true` and the
-corresponding `FLOWER_CA_CERT` / `FLOWER_SERVER_CERT` / `FLOWER_SERVER_KEY` environment variables
-(or their `TLS_*` fallbacks) are set.
-
-### 5. Flower Client TLS & No-Silent-Downgrade Rule — `hospital_client/federation/flower_client.py`
-
-`FlowerConnection` now accepts `ca_path`, `root_certificates`, `insecure`, `max_retries`, and
-`max_wait_time`. The `r_flower_connect` handler in `local_api/server.py` enforces **Rule 1**:
-
-> **If `ML_BACKEND_URL` is `https://`, the Flower client MUST use TLS. A missing or unreadable
-> CA certificate is an error (HTTP 400) with a clear message. `insecure=True` is never set
-> in TLS mode.**
-
-Rationale: the hospital's bearer token and model weights travel over the Flower channel, and the
-Flower server address comes from the browser request — a compromised page could redirect to a
-plain-text server that captures both.
-
-TLS-mode CA resolution order:
-1. `FLOWER_CA` environment variable
-2. `ML_BACKEND_CA` environment variable
-3. `ca_path` field in the request body
-4. `certs/ca.pem` in the repo root (auto-detected)
+- **Backend TLS verification**: All HTTP/HTTPS requests go through `backend_urlopen()`. For HTTPS URLs, a strict `SSLContext` enforcing `ML_BACKEND_CA` is used (`verify_mode = ssl.CERT_REQUIRED`, `check_hostname = True`). Verification failures raise `ApiError(502)` with SAN guidance.
+- **Rule 1 (No silent downgrade)**: In `r_flower_connect`, if `BACKEND_URL` starts with `https://`, Flower TLS is mandatory.
+- **Local config only**: The CA certificate path is resolved strictly from local configuration (`FLOWER_CA` / `ML_BACKEND_CA` / `certs/ca.pem`). Request bodies are **not** permitted to supply a `ca_path` (`body.get("ca_path")` is removed and ignored), preventing an attacker who controls the server address from also dictating the trusted CA.
+- **Startup warning**: If `ML_BACKEND_URL` is plain HTTP and points to a non-loopback host, logs a prominent startup security warning.
 
 ---
 
 ## Known Limitations
 
-- **CORS / Socket.io origins**: The backend accepts any origin in development mode. In production,
-  `CORS_ORIGIN` should be set to the exact frontend origin.
-- **No mutual TLS (mTLS)**: The server verifies itself to clients but clients do not present
-  certificates to the server. mTLS would require hospital-specific client certs and a PKI.
-- **No certificate rotation or revocation**: Replacing certificates requires restarting the backend
-  and Flower server. CRL/OCSP support is out of scope.
-- **Browser → Local ML service** (`http://127.0.0.1:8765`): This connection is HTTP. Loopback
-  (`127.0.0.1`) is a W3C Trustworthy Origin so browsers do not block it as mixed content when the
-  frontend is served over HTTPS. This is acceptable for a local-only service.
-- **Production CA**: `make_dev_certs.py` generates a self-signed development CA. In production,
-  a certificate from a trusted CA (e.g. Let's Encrypt) or an internal PKI should be used.
-- **Flower `max_retries` / `max_wait_time`**: Set to `max_retries=1, max_wait_time=2.0` in the
-  bounded negative tests (wrong CA, insecure client) to prevent hangs. Production connections should
-  use higher values appropriate to network conditions.
+- **Backend CORS and Socket.io accept any origin**: The backend and Socket.io currently accept requests from any origin (`cors()`). Restricting origins to specific frontend origins is left for production deployment.
+- **Real browser verification status: Not verified**: Automated browser verification for CA trust is not verified because `certutil -user -addstore` triggers a Windows GUI security warning dialog that cannot be automated without interactive user intervention.
+- **No mutual TLS (mTLS)**: The server verifies itself to clients, but clients do not present client certificates to the server (authentication is achieved via bearer JWTs over TLS).
+- **No certificate rotation without restart**: Updating certificates requires restarting the backend and Flower server.
+- **Browser → Local ML Service is HTTP loopback**: Served on `http://127.0.0.1:8765`. Modern browsers permit HTTPS pages to fetch from `127.0.0.1` because loopback is a W3C Trustworthy Origin.
 
 ---
 
 ## Future Work
 
-- **mTLS**: Issue hospital-specific client certificates and verify them in the Flower server's
-  `verify_identity` callback, replacing the bearer-token-over-gRPC approach.
-- **Certificate rotation without downtime**: Use `SSLContext.load_cert_chain` with SIGHUP to reload
-  certificates without restarting the process.
-- **OCSP stapling / CRL checking**: Add `ctx.verify_flags = ssl.VERIFY_X509_STRICT` and an OCSP
-  responder for revocation.
-- **Automated cert renewal**: Integrate with Let's Encrypt / ACME for automatic renewal in production.
-- **HSTS header**: Add `Strict-Transport-Security` to all backend responses once TLS is mandatory.
+- **mTLS**: Hospital-specific client certificates verified by Flower server and backend.
+- **Automated ACME / Let's Encrypt**: Automated issuance and renewal for public server domains.
+- **OCSP Stapling / CRL Checking**: Strict revocation verification.
+- **HSTS Header**: `Strict-Transport-Security` enforcement on the backend API.
 
 ---
 
 ## Verification
 
-All tests pass on the `module-10-dp` branch (no regressions):
+All tests run without requiring pre-existing `certs/` on disk (certificates are generated dynamically into temporary directories inside test fixtures):
 
-### Backend Tests (`cd backend && npm test`)
+### 1. Backend Tests (`cd backend && npm test`)
+- **188 passed, 5 test suites passed** (183 existing + 5 in `tests/api/tls.test.js`):
+  - `creates standard HTTP server by default when TLS is disabled`
+  - `refuses to start when TLS is enabled but cert or key path is missing`
+  - `refuses to start when TLS certificate file does not exist`
+  - `creates HTTPS server with explicit TLSv1.2 when valid cert and key are provided (never skips)`
+  - `refuses to start Flower server in TLS mode when Flower TLS certs are missing or incomplete`
 
-| Suite | Tests | Result |
-|-------|-------|--------|
-| `tls.test.js` (new) | 4 | ✅ |
-| `auth.test.js` | 45 | ✅ |
-| `federation.test.js` | 103 | ✅ |
-| `module_1_2_3_full.test.js` | 29 | ✅ |
-| `training_progress.test.js` | 6 | ✅ |
-| **Total** | **187** | **✅ all pass** |
+### 2. Hospital Client Tests (`python -m pytest hospital_client/local_api/tests/test_tls.py -v`)
+- **6 passed, 0 skipped**:
+  - `test_security_warning_on_remote_http`
+  - `test_ssl_context_enforces_ca`
+  - `test_backend_urlopen_with_trusted_ca`
+  - `test_backend_urlopen_with_wrong_ca_fails`
+  - `test_rule_1_flower_no_silent_downgrade`
+  - `test_flower_connect_rejects_body_ca_path`
 
-TLS-specific tests:
-- `creates standard HTTP server by default when TLS is disabled`
-- `refuses to start when TLS is enabled but cert or key path is missing`
-- `refuses to start when TLS certificate file does not exist`
-- `creates HTTPS server with explicit TLSv1.2 when valid cert and key are provided`
-
-### Hospital Client Tests (`python -m pytest hospital_client -q`)
-
-| Suite | Tests | Result |
-|-------|-------|--------|
-| `test_tls.py` (new) | 5 | ✅ |
-| `test_server.py` | 101+ | ✅ |
-| All other suites | 755+ | ✅ |
-| **Total** | **863** | **✅ 861 pass, 2 skip** |
-
-TLS-specific tests:
-- `test_security_warning_on_remote_http` — warning for remote HTTP, no warning for loopback or HTTPS
-- `test_ssl_context_enforces_ca` — missing CA file raises ApiError(500); valid CA returns enforced SSLContext
-- `test_backend_urlopen_with_trusted_ca` — HTTPS request to mock server succeeds with correct CA
-- `test_backend_urlopen_with_wrong_ca_fails` — untrusted CA raises ApiError(502) with SAN guidance
-- `test_rule_1_flower_no_silent_downgrade` — r_flower_connect raises ApiError(400) if backend is HTTPS but no CA
-
-### Federation Tests (`python -m pytest federation/tests -q`)
-
-| Suite | Tests | Result |
-|-------|-------|--------|
-| `test_flower_tls.py` (new) | 3 | ✅ |
-| All existing suites | 139 | ✅ |
-| **Total** | **142** | **✅ all pass** |
-
-TLS-specific tests:
-- `test_flower_tls_round_success` — full FL round over gRPC+TLS with dev certs
-- `test_flower_tls_wrong_ca_fails_bounded` — wrong CA: client fails within 10 s (bounded by max_retries=1)
-- `test_flower_tls_insecure_client_fails_bounded` — insecure client vs TLS server: fails within 10 s
-
-> **Note on warnings in bounded tests**: The Flower server background threads raise
-> `ValueError: signal only works in main thread` when `fl.server.start_server` is called from a
-> non-main thread. This is a pytest thread-isolation artifact that does not occur in production
-> (where `flower_app.__main__` runs in the main thread). All 3 tests pass.
+### 3. Federation Tests (`python -m pytest federation/tests/test_flower_tls.py -v`)
+- **3 passed, 0 skipped**:
+  - `test_flower_tls_round_success` — full round over TLS in main thread.
+  - `test_flower_tls_wrong_ca_fails_bounded` — Flower server in subprocess with TLS; client with untrusted CA fails with SSL verification error within bound.
+  - `test_flower_tls_insecure_client_fails_bounded` — Flower server in subprocess with TLS; client with insecure=True fails within bound.

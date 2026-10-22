@@ -1248,7 +1248,7 @@ def r_flower_connect(h, m, q):
 
     # Rule 1: No silent downgrade for Flower. If backend is HTTPS, Flower client MUST use TLS.
     is_tls = BACKEND_URL.startswith("https://")
-    ca_path = os.environ.get("FLOWER_CA") or os.environ.get("ML_BACKEND_CA") or body.get("ca_path")
+    ca_path = os.environ.get("FLOWER_CA") or os.environ.get("ML_BACKEND_CA")
     if is_tls:
         if not ca_path:
             default_ca = os.path.join(REPO_ROOT, "certs", "ca.pem")
