@@ -147,3 +147,12 @@ evaluation_datasets/
 # Misnamed env files (Vite/dotenv only read .env) - never commit their secrets
 /backend/env
 /frontend/**/env
+
+# --- Module 11: TLS Certificates and Private Keys ---
+# Never commit CA keys, server certificates, or private keys
+certs/
+**/certs/
+*.key
+*.pem
+*.crt
+

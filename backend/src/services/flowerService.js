@@ -62,9 +62,23 @@ const start = async (job) => {
   fs.mkdirSync(dir, { recursive: true });
   fs.rmSync(path.join(dir, 'close_round'), { force: true });
   const port = Number(process.env.FLOWER_PORT) || await freePort();
-  const backendUrl = process.env.BACKEND_SELF_URL || `http://localhost:${process.env.PORT || 5000}/api/v1`;
-  const child = spawn('python', ['-m', 'federation.flower_app', '--job-id', jobId, '--port', String(port),
-    '--backend-url', backendUrl, '--status-file', statusPath(jobId)], {
+  const defaultProto = process.env.TLS_ENABLED === 'true' ? 'https' : 'http';
+  const backendUrl = process.env.BACKEND_SELF_URL || `${defaultProto}://localhost:${process.env.PORT || 5000}/api/v1`;
+  const flowerArgs = ['-m', 'federation.flower_app', '--job-id', jobId, '--port', String(port),
+    '--backend-url', backendUrl, '--status-file', statusPath(jobId)];
+  const caCert = process.env.FLOWER_CA_CERT || process.env.TLS_CA_PATH;
+  const srvCert = process.env.FLOWER_SERVER_CERT || process.env.TLS_CERT_PATH;
+  const srvKey = process.env.FLOWER_SERVER_KEY || process.env.TLS_KEY_PATH;
+  if (caCert && srvCert && srvKey) {
+    flowerArgs.push('--ca-cert', caCert,
+                    '--server-cert', srvCert,
+                    '--server-key', srvKey);
+  }
+  const backendCa = process.env.ML_BACKEND_CA || process.env.FLOWER_BACKEND_CA || process.env.TLS_CA_PATH;
+  if (backendCa) {
+    flowerArgs.push('--backend-ca', backendCa);
+  }
+  const child = spawn('python', flowerArgs, {
     cwd: REPO_ROOT, env: { ...process.env, PYTHONPATH: '.', PYTHONUNBUFFERED: '1' },
   });
   const log = (data) => process.stdout.write(`[flower ${jobId}] ${data}`);

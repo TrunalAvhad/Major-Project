@@ -37,6 +37,7 @@ import sys
 import tempfile
 import threading
 import time
+import ssl
 import traceback
 from typing import Optional
 import urllib.error
@@ -50,11 +51,13 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("ML_API_PORT", "8765"))
 ORIGINS = {
-    o.strip()
+    o.strip().rstrip("/")
     for o in os.environ.get(
         "ML_API_ORIGINS",
         "http://localhost:5173,http://127.0.0.1:5173,"
-        "http://localhost:5174,http://127.0.0.1:5174",
+        "http://localhost:5174,http://127.0.0.1:5174,"
+        "https://localhost:5173,https://127.0.0.1:5173,"
+        "https://localhost:5174,https://127.0.0.1:5174",
     ).split(",")
     if o.strip()
 }
@@ -85,6 +88,86 @@ class ApiError(Exception):
         self.status = status
 
 
+# ---------------------------------------------------------------- TLS & Security
+
+def check_backend_security_warning(backend_url: str = BACKEND_URL) -> None:
+    """Logs a security warning if the backend URL uses unencrypted HTTP to a non-loopback host."""
+    parsed = urlparse(backend_url)
+    if parsed.scheme == "http":
+        hostname = (parsed.hostname or "").lower()
+        if hostname and hostname not in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+            print(
+                f"\n⚠️  [SECURITY WARNING]: ML_BACKEND_URL '{backend_url}' uses unencrypted HTTP to remote host '{hostname}'. "
+                f"Bearer tokens and model updates will cross the network in plain text. "
+                f"Configure HTTPS (TLS) and ML_BACKEND_CA in production.\n",
+                flush=True,
+            )
+
+
+def get_backend_ssl_context(backend_url: str = BACKEND_URL) -> Optional[ssl.SSLContext]:
+    """Returns an SSLContext configured with ML_BACKEND_CA if backend_url uses HTTPS.
+    Certificate verification is strictly enforced and NEVER disabled.
+    """
+    if not backend_url.startswith("https://"):
+        return None
+
+    ca_path = os.environ.get("ML_BACKEND_CA")
+    if ca_path:
+        if not os.path.isfile(ca_path):
+            raise ApiError(500, f"Configured ML_BACKEND_CA file not found or unreadable: '{ca_path}'.")
+        try:
+            ctx = ssl.create_default_context(cafile=ca_path)
+        except Exception as e:
+            raise ApiError(500, f"Failed to load ML_BACKEND_CA bundle from '{ca_path}': {e}")
+    else:
+        ctx = ssl.create_default_context()
+
+    ctx.check_hostname = True
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    return ctx
+
+
+def backend_urlopen(req: urllib.request.Request, timeout: float = 10):
+    """Executes an HTTP/HTTPS request to the backend with strict TLS certificate verification.
+    For HTTPS URLs the SSLContext is always explicit and certificate verification is enforced.
+    For HTTP URLs no context is passed so existing test mocks remain compatible.
+    """
+    ctx = get_backend_ssl_context(req.full_url)
+    try:
+        if ctx is not None:
+            return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+        return urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.URLError as e:
+        reason = getattr(e, "reason", e)
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            raise ApiError(
+                502,
+                f"Backend TLS certificate verification failed: {reason.verify_message or reason}. "
+                f"Ensure the certificate is signed by ML_BACKEND_CA and that the target host "
+                f"is included in the certificate's Subject Alternative Names (SANs)."
+            )
+        if isinstance(reason, ssl.SSLError):
+            raise ApiError(
+                502,
+                f"Backend TLS connection failed: {reason}. "
+                f"Verify that the backend TLS certificate and SANs match the request host."
+            )
+        raise
+    except ssl.SSLCertVerificationError as e:
+        raise ApiError(
+            502,
+            f"Backend TLS certificate verification failed: {e.verify_message or e}. "
+            f"Ensure the certificate is signed by ML_BACKEND_CA and that the target host "
+            f"is included in the certificate's Subject Alternative Names (SANs)."
+        )
+    except ssl.SSLError as e:
+        raise ApiError(
+            502,
+            f"Backend TLS connection failed: {e}. "
+            f"Verify that the backend TLS certificate and SANs match the request host."
+        )
+
+
 # ---------------------------------------------------------------- auth
 
 _auth_cache = {}
@@ -101,12 +184,14 @@ def verify_token(token: str) -> dict:
     req = urllib.request.Request(f"{BACKEND_URL}/auth/me",
                                  headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=5) as r:
+        with backend_urlopen(req, timeout=5) as r:
             user = json.load(r)["data"]["user"]
+    except ApiError:
+        raise
     except urllib.error.HTTPError:
         raise ApiError(401, "Your session is not valid. Please sign in again.")
-    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
-        raise ApiError(503, "Cannot verify your session: the backend API is unreachable.")
+    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError) as e:
+        raise ApiError(503, f"Cannot verify your session: the backend API is unreachable ({e}).")
     with _auth_lock:
         _auth_cache[token] = (now + AUTH_TTL_SECONDS, user)
     return user
@@ -815,7 +900,7 @@ def r_get_task_vocabulary(h, m, q):
             f"{BACKEND_URL}/federation/jobs",
             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
         )
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with backend_urlopen(req, timeout=10) as r:
             data = json.load(r)
         jobs = data.get("jobs", [])
         tasks = sorted(set(j.get("task", "") for j in jobs if j.get("task")))
@@ -835,8 +920,10 @@ def _submit_handoff(ws, model_id: str, job_id: str, round_id: str, token: str, a
         data=json.dumps({"handoff_dir": handoff_dir}).encode("utf-8"),
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"}, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:
+        with backend_urlopen(req, timeout=120) as r:
             return json.load(r)
+    except ApiError:
+        raise
     except urllib.error.HTTPError as e:
         try:
             err = json.load(e).get("error")
@@ -844,8 +931,8 @@ def _submit_handoff(ws, model_id: str, job_id: str, round_id: str, token: str, a
             err = None
         msg = err.get("message") if isinstance(err, dict) else err
         raise ApiError(502, f"Federation server refused the update: {msg or e.reason}")
-    except urllib.error.URLError as e:
-        raise ApiError(502, f"Federation server unreachable: {e.reason}")
+    except (urllib.error.URLError, OSError) as e:
+        raise ApiError(502, f"Federation server unreachable: {e.reason if hasattr(e, 'reason') else e}")
 
 
 def _ensure_base_model(ws, architecture: str, rnd: dict, token: str) -> None:
@@ -865,14 +952,16 @@ def _ensure_base_model(ws, architecture: str, rnd: dict, token: str) -> None:
         for name in (ARTIFACT_FILENAME, METADATA_FILENAME):
             req = urllib.request.Request(f"{BACKEND_URL}/federation/rounds/{round_id}/base-model/{name}",
                                          headers={"Authorization": f"Bearer {token}"})
-            with urllib.request.urlopen(req, timeout=300) as r, open(os.path.join(tmp, name), "wb") as f:
+            with backend_urlopen(req, timeout=300) as r, open(os.path.join(tmp, name), "wb") as f:
                 shutil.copyfileobj(r, f)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         os.replace(tmp, dest)
+    except ApiError:
+        raise
     except urllib.error.HTTPError as e:
         raise ApiError(502, f"Could not download the round's base model {model_id} v{version}: {e.reason}")
-    except urllib.error.URLError as e:
-        raise ApiError(502, f"Federation server unreachable: {e.reason}")
+    except (urllib.error.URLError, OSError) as e:
+        raise ApiError(502, f"Federation server unreachable: {e.reason if hasattr(e, 'reason') else e}")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1137,8 +1226,11 @@ def _backend_reporter(job_id: str, conn_ref: dict):
         req = urllib.request.Request(f"{BACKEND_URL}/federation/jobs/{job_id}/flower/report",
                                      data=json.dumps(body).encode("utf-8"), method="POST",
                                      headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return json.load(r)
+        try:
+            with backend_urlopen(req, timeout=10) as r:
+                return json.load(r)
+        except Exception:
+            return {}
     return report
 
 
@@ -1153,6 +1245,25 @@ def r_flower_connect(h, m, q):
         raise ApiError(400, "Invalid Flower server address (expected host:port).")
     if not DATASET_ID_RE.match(dataset_id or ""):
         raise ApiError(400, "Invalid dataset id.")
+
+    # Rule 1: No silent downgrade for Flower. If backend is HTTPS, Flower client MUST use TLS.
+    is_tls = BACKEND_URL.startswith("https://")
+    ca_path = os.environ.get("FLOWER_CA") or os.environ.get("ML_BACKEND_CA") or body.get("ca_path")
+    if is_tls:
+        if not ca_path:
+            default_ca = os.path.join(REPO_ROOT, "certs", "ca.pem")
+            if os.path.isfile(default_ca):
+                ca_path = default_ca
+        if not ca_path or not os.path.isfile(ca_path):
+            raise ApiError(
+                400,
+                f"TLS mode is active (backend uses HTTPS), but Flower CA certificate is missing or unreadable: '{ca_path}'. "
+                f"Insecure connections are prohibited in TLS mode to protect bearer tokens and model weights."
+            )
+        insecure = False
+    else:
+        insecure = True
+
     token = h.headers.get("Authorization", "").removeprefix("Bearer ").strip()
     key = (h.ws.hospital_id, job_id)
     with _flower_lock:
@@ -1162,7 +1273,9 @@ def r_flower_connect(h, m, q):
         run_training, calibrate = _flower_runner(h.ws, job, dataset_id)
         ref = {}
         conn = FlowerConnection(h.ws.hospital_id, job_id, address, token, run_training, calibrate,
-                                report=_backend_reporter(job_id, ref))
+                                report=_backend_reporter(job_id, ref),
+                                ca_path=ca_path if is_tls else None,
+                                insecure=insecure)
         ref["conn"] = conn
         _flower[key] = conn
     conn.start()
@@ -1309,6 +1422,7 @@ def make_server(port: int = PORT) -> ThreadingHTTPServer:
 
 def main():
     os.makedirs(WORK_DIR, exist_ok=True)
+    check_backend_security_warning(BACKEND_URL)
     server = make_server()
     print(f"MedFL local ML service on http://{HOST}:{PORT}/api/ml  (work dir: {WORK_DIR}/<hospital_id>)")
     print(f"Allowed UI origins: {sorted(ORIGINS)} | auth via {BACKEND_URL}/auth/me")

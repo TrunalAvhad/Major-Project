@@ -346,7 +346,8 @@ class AppStrategy(fl.server.strategy.Strategy):
 
 def serve(storage, job_id: str, address: str, status_path: str, verify_identity: Callable[[str, str], bool],
           close_path: Optional[str] = None, public_address: Optional[str] = None,
-          eval_datasets_dir: str = "evaluation_datasets", poll_seconds: float = 2.0) -> dict:
+          eval_datasets_dir: str = "evaluation_datasets", poll_seconds: float = 2.0,
+          certificates: Optional[tuple] = None) -> dict:
     """Runs the job's remaining planned rounds over Flower; returns the final status."""
     job = find_job(storage, job_id)
     if job is None:
@@ -369,8 +370,14 @@ def serve(storage, job_id: str, address: str, status_path: str, verify_identity:
     threading.Thread(target=beat, daemon=True).start()
     try:
         total_flower_rounds = remaining if strategy.is_dp else 2 * remaining
-        fl.server.start_server(server_address=address, strategy=strategy,
-                               config=fl.server.ServerConfig(num_rounds=total_flower_rounds, round_timeout=hours * 3600 + 600))
+        server_kwargs = {
+            "server_address": address,
+            "strategy": strategy,
+            "config": fl.server.ServerConfig(num_rounds=total_flower_rounds, round_timeout=hours * 3600 + 600),
+        }
+        if certificates is not None:
+            server_kwargs["certificates"] = certificates
+        fl.server.start_server(**server_kwargs)
     finally:
         stop.set()
     if status.data["state"] not in ("finished", "failed"):

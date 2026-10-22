@@ -12,10 +12,11 @@ backend) is polled; when the server says the round is closing, training is cance
 hospital's update for that round is skipped.
 """
 import json
+import os
 import threading
 import time
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 import flwr as fl
 
@@ -26,10 +27,17 @@ import flwr as fl
 class FlowerConnection:
     def __init__(self, hospital_id: str, job_id: str, address: str, token: str,
                  run_training: Callable, calibrate: Callable, report: Optional[Callable] = None,
-                 poll_seconds: float = 5.0):
+                 poll_seconds: float = 5.0, ca_path: Optional[str] = None,
+                 root_certificates: Optional[Union[bytes, str]] = None, insecure: bool = True,
+                 max_retries: Optional[int] = None, max_wait_time: Optional[float] = None):
         self.hospital_id, self.job_id, self.address = hospital_id, job_id, address
         self._token = token
         self.run_training, self.calibrate, self.report, self.poll = run_training, calibrate, report, poll_seconds
+        self.ca_path = ca_path
+        self.root_certificates = root_certificates
+        self.insecure = insecure
+        self.max_retries = max_retries
+        self.max_wait_time = max_wait_time
         self._lock = threading.Lock()
         self._stopped = False
         self._thread = None
@@ -42,12 +50,38 @@ class FlowerConnection:
         def run():
             self._set(state="waiting", message="Connected to the federation server; waiting for the next round.")
             try:
-                fl.client.start_client(server_address=self.address, client=self.client(), insecure=True)
+                root_certs = self.root_certificates
+                if root_certs is None and self.ca_path:
+                    if not os.path.isfile(self.ca_path):
+                        raise RuntimeError(f"Flower CA certificate file not found: '{self.ca_path}'")
+                    with open(self.ca_path, "rb") as f:
+                        root_certs = f.read()
+
+                client_kwargs = {
+                    "server_address": self.address,
+                    "client": self.client(),
+                }
+                if root_certs is not None or not self.insecure:
+                    client_kwargs["insecure"] = False
+                    if root_certs is not None:
+                        client_kwargs["root_certificates"] = root_certs
+                else:
+                    client_kwargs["insecure"] = True
+
+                if self.max_retries is not None:
+                    client_kwargs["max_retries"] = self.max_retries
+                if self.max_wait_time is not None:
+                    client_kwargs["max_wait_time"] = self.max_wait_time
+
+                fl.client.start_client(**client_kwargs)
                 if not self._stopped:
                     self._set(state="disconnected", message="The federation server finished this job's rounds.")
             except Exception as e:  # server unreachable, connection lost
                 if not self._stopped:
-                    self._set(state="failed", message=f"Connection to the federation server failed: {e}")
+                    msg = str(e)
+                    if "CERTIFICATE_VERIFY_FAILED" in msg or "certificate" in msg.lower() or "ssl" in msg.lower():
+                        msg = f"{msg} (Verify that server address '{self.address}' matches certificate Subject Alternative Names (SANs) and CA bundle)"
+                    self._set(state="failed", message=f"Connection to the federation server failed: {msg}")
         self._thread = threading.Thread(target=run, name=f"flower-{self.job_id}", daemon=True)
         self._thread.start()
 
