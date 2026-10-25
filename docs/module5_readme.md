@@ -262,12 +262,17 @@ If grouped splitting is explicitly requested without a real, complete group-ID m
 
 ## 11. Class Balancing
 
-balancing/sampler.py supports training-oriented class balancing strategies including:
-- class weights
-- oversampling
-- undersampling
+`balancing/sampler.py` records training-only balancing metadata in the manifest, chosen by `ClassConfig.imbalance_strategy` (`"none"` by default, `"class_weights"`, `"oversample"`, `"undersample"`):
+- training class counts (always)
+- inverse-frequency class weights, `n_samples / (n_classes * count)` (any strategy except `"none"`)
+- oversample ratios (`max_count / count`) or undersample ratios (`min_count / count`)
 
 Balancing decisions are based on the training split only. Validation and test distributions are not modified for balancing purposes.
+
+### Limitations
+
+- Oversampling and undersampling are metadata only: the ratios are written to the manifest, but no samples are repeated or dropped, and Module 7 does not read them. Only the class weights are used (by Module 7's `class_weighting="manifest"`).
+- `imbalance_strategy` can only be set through the Python `PreprocessingConfig`; the preprocessing CLI and the hospital app always use `"none"`.
 
 ## 12. Tabular Preprocessing and Leakage Prevention
 
@@ -595,7 +600,7 @@ The coverage includes the implemented split-validation, leakage-policy, partial-
 | Real group-ID validation | Complete |
 | Stratified splitting | Complete |
 | Grouped splitting | Complete |
-| Class balancing | Complete |
+| Class balancing | Class weights complete; over/undersampling ratios recorded only (§11) |
 | Training-only fitting | Complete |
 | Image transformations | Complete |
 | Augmentation separation | Complete |

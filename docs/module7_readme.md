@@ -402,6 +402,13 @@ than fail or fabricate a result.
   future design, not Module 7's.
 - Notification of training completion/failure to a user interface is not
   implemented here - see §21.
+- Class weighting (§8) is available only through the training CLI
+  (`--class-weighting`); the hospital app always trains with `"none"`, and
+  there is no class-aware sampler (Module 5's over/undersample ratios are not
+  applied). On an imbalanced dataset this shows: the ISIC 2019 MobileNetV2 run
+  (unweighted) reached 85.08% test accuracy but found only 112 of 453
+  melanomas (24.7% recall, macro F1 64.37%). Weighted training has not been
+  evaluated yet.
 - Checkpoints saved, and Module 5 manifests written, before the `task_type`/
   `preprocessing_spec`/`image_preprocessing` metadata existed carry no spec or
   `upstream` block, so Module 16 cannot verify their preprocessing.
